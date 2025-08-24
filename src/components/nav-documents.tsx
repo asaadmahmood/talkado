@@ -99,28 +99,6 @@ export function NavDocuments({
                         </SidebarMenuButton>
                     </SidebarMenuItem>
                 ))}
-
-                {/* Labels */}
-                {labels.map((label) => (
-                    <SidebarMenuItem key={label.id}>
-                        <SidebarMenuButton className="text-sidebar-foreground/70">
-                            <div
-                                className="w-4 h-4 rounded-full shrink-0"
-                                style={{ backgroundColor: label.color }}
-                            />
-                            <span>{label.name}</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                ))}
-
-                {labels.length === 0 && (
-                    <SidebarMenuItem>
-                        <SidebarMenuButton className="text-sidebar-foreground/70">
-                            <Tag className="text-sidebar-foreground/70" />
-                            <span className="italic">No labels yet</span>
-                        </SidebarMenuButton>
-                    </SidebarMenuItem>
-                )}
             </SidebarMenu>
         </SidebarGroup>
     )

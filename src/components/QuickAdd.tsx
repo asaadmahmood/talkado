@@ -2,13 +2,20 @@ import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import { Mic, Sparkles, Plus, Square, Flag, Calendar } from "lucide-react";
+import { Mic, Sparkles, Plus, Flag, Calendar, Repeat } from "lucide-react";
 import { getAllDatePatterns } from "../utils/datePatterns";
+import { parseRecurringPattern, cleanRecurringText, parseTimeFromText, getAllRecurringPatterns } from "../utils/recurringPatterns";
+import { toast } from "sonner";
+import { useNavigate } from "react-router-dom";
+import { useTaskSelection } from "../contexts/TaskSelectionContext";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
+
 
 // Date patterns to highlight like Todoist - Only very clear date intentions
 const DATE_PATTERNS = [
@@ -33,62 +40,77 @@ const DATE_PATTERNS = [
     /\b(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/gi,
     /^(\d{1,2})(st|nd|rd|th)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/gi,
     /\b(\d{1,2})(st|nd|rd|th)\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/gi,
+
+    // Recurring patterns
+    /\b(every day|daily|each day)\b/gi,
+    /\b(every \d+ days?)\b/gi,
+    /\b(every week|weekly|each week)\b/gi,
+    /\b(every \d+ weeks?)\b/gi,
+    /\b(every month|monthly|each month)\b/gi,
+    /\b(every \d+ months?)\b/gi,
+    /\b(every year|yearly|each year|annually)\b/gi,
+    /\b(every \d+ years?)\b/gi,
+    /\b(every (monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,
+    /\b(each (monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,
+    /\b(on (monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?)\b/gi,
+    /\b(every (\d{1,2})(st|nd|rd|th)?)\b/gi,
+    /\b(each (\d{1,2})(st|nd|rd|th)?)\b/gi,
+    /\b(on the (\d{1,2})(st|nd|rd|th)?)\b/gi,
 ];
 
 // Function to detect and highlight date patterns in text
 function highlightDates(text: string): { hasDate: boolean; highlighted: React.ReactNode[] } {
-    if (!text.trim()) return { hasDate: false, highlighted: [] };
+    const elements: React.ReactNode[] = [];
+    let lastIndex = 0;
+    let foundDates = false;
 
-    const foundDates: string[] = [];
-
-    // Find all date matches
-    DATE_PATTERNS.forEach(pattern => {
-        const matches = text.match(pattern);
-        if (matches) {
-            foundDates.push(...matches);
+    // Check for recurring patterns first
+    const recurringPattern = getAllRecurringPatterns();
+    let recurringMatch;
+    while ((recurringMatch = recurringPattern.exec(text)) !== null) {
+        foundDates = true;
+        // Add text before the match
+        if (recurringMatch.index > lastIndex) {
+            elements.push(text.slice(lastIndex, recurringMatch.index));
         }
-    });
-
-    if (foundDates.length === 0) {
-        return { hasDate: false, highlighted: [] };
+        // Add the recurring pattern with special styling
+        elements.push(
+            <span key={`recurring-${recurringMatch.index}`} className="bg-purple-100 text-purple-800 px-1 rounded">
+                {recurringMatch[0]}
+                <Repeat className="inline h-3 w-3 ml-1" />
+            </span>
+        );
+        lastIndex = recurringMatch.index + recurringMatch[0].length;
     }
 
-    // Create highlighted version
-    let segments = [text];
-    foundDates.forEach(dateText => {
-        const newSegments: string[] = [];
-        segments.forEach(segment => {
-            if (typeof segment === 'string') {
-                const parts = segment.split(new RegExp(`(${dateText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'));
-                newSegments.push(...parts);
-            } else {
-                newSegments.push(segment);
+    // Check for regular date patterns
+    const datePattern = getAllDatePatterns();
+    let dateMatch;
+    while ((dateMatch = datePattern.exec(text)) !== null) {
+        // Skip if this was already matched as a recurring pattern
+        if (dateMatch.index >= lastIndex) {
+            foundDates = true;
+            // Add text before the match
+            if (dateMatch.index > lastIndex) {
+                elements.push(text.slice(lastIndex, dateMatch.index));
             }
-        });
-        segments = newSegments;
-    });
-
-    // Convert to JSX elements
-    const highlighted = segments.map((segment, index) => {
-        const isDate = foundDates.some(date =>
-            date.toLowerCase() === segment.toLowerCase()
-        );
-
-        if (isDate) {
-            return (
-                <span
-                    key={index}
-                    className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 mx-0.5"
-                >
-                    {segment}
+            // Add the date pattern
+            elements.push(
+                <span key={`date-${dateMatch.index}`} className="bg-blue-100 text-blue-800 px-1 rounded">
+                    {dateMatch[0]}
+                    <Calendar className="inline h-3 w-3 ml-1" />
                 </span>
             );
+            lastIndex = dateMatch.index + dateMatch[0].length;
         }
+    }
 
-        return <span key={index}>{segment}</span>;
-    });
+    // Add remaining text
+    if (lastIndex < text.length) {
+        elements.push(text.slice(lastIndex));
+    }
 
-    return { hasDate: foundDates.length > 0, highlighted };
+    return { hasDate: foundDates, highlighted: elements };
 }
 
 // Simple programmatic date parsing for text input (no AI needed)
@@ -155,6 +177,8 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
     const [transcript, setTranscript] = useState("");
     const [interimTranscript, setInterimTranscript] = useState("");
     const [recordingTime, setRecordingTime] = useState(0);
+    const isCancelingRef = useRef(false);
+    const navigate = useNavigate();
 
     const inputRef = useRef<HTMLInputElement>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -171,6 +195,38 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
     const createTask = useMutation(api.tasks.create);
     const aiCapture = useAction(api.ai.capture);
     const transcribeAudio = useAction(api.ai.transcribe);
+    const { openDetailsPanel } = useTaskSelection();
+
+    // Function to navigate to task and open details
+    const navigateToTask = (taskData: any) => {
+        console.log('QuickAdd: Navigating to task with data:', taskData);
+
+        // Store the task data in sessionStorage so the page can open it
+        const taskId = taskData._id || taskData.id;
+        console.log('QuickAdd: Storing task ID in sessionStorage:', taskId);
+        sessionStorage.setItem('openTaskId', taskId);
+
+        // Navigate to the correct page based on project
+        if (taskData.projectId) {
+            console.log('QuickAdd: Navigating to project:', taskData.projectId);
+            // Check if we're already on the project page
+            if (window.location.pathname === `/projects/${taskData.projectId}`) {
+                // Dispatch a custom event to trigger task opening
+                window.dispatchEvent(new CustomEvent('openTask', { detail: { taskId } }));
+            } else {
+                navigate(`/projects/${taskData.projectId}`);
+            }
+        } else {
+            console.log('QuickAdd: Navigating to all tasks');
+            // Check if we're already on the all tasks page
+            if (window.location.pathname === '/all') {
+                // Dispatch a custom event to trigger task opening
+                window.dispatchEvent(new CustomEvent('openTask', { detail: { taskId } }));
+            } else {
+                navigate('/all');
+            }
+        }
+    };
 
     // Focus input on Cmd/Ctrl+K
     useEffect(() => {
@@ -493,21 +549,96 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
             const detectedProjectId = parseProjectFromInput(input);
             const finalProjectId = detectedProjectId || projectId;
 
-            // Clean the input text (remove hashtags)
-            const cleanTitle = cleanInputText(input);
+            // Parse recurring pattern
+            const recurringPattern = parseRecurringPattern(input);
+            const timeFromText = parseTimeFromText(input);
+
+            console.log("Input text:", input);
+            console.log("Parsed recurring pattern:", recurringPattern);
+            console.log("Parsed time:", timeFromText);
+
+            // Clean the input text (remove hashtags and recurring patterns)
+            let cleanTitle = cleanInputText(input);
+            if (recurringPattern) {
+                cleanTitle = cleanRecurringText(cleanTitle);
+            }
+
+            console.log("Cleaned title:", cleanTitle);
 
             // Comprehensive date parsing using all patterns
             const parsedDate = parseComprehensiveDate(input);
 
-            // Create task with or without due date
-            await createTask({
+            // Calculate initial due date for recurring tasks
+            let initialDueDate = parsedDate;
+            if (recurringPattern && !parsedDate) {
+                // If no specific date but recurring pattern, calculate the next occurrence
+                const today = new Date();
+
+                if (recurringPattern.type === "weekly" && recurringPattern.dayOfWeek !== undefined) {
+                    // Calculate next occurrence of the specified day of week
+                    const currentDay = today.getDay();
+                    const targetDay = recurringPattern.dayOfWeek;
+                    let daysToAdd = targetDay - currentDay;
+
+                    // If today is the target day, schedule for next week
+                    if (daysToAdd === 0) {
+                        daysToAdd = 7;
+                    }
+                    // If target day has passed this week, schedule for next week
+                    else if (daysToAdd < 0) {
+                        daysToAdd += 7;
+                    }
+
+                    initialDueDate = new Date(today);
+                    initialDueDate.setDate(today.getDate() + daysToAdd);
+                } else {
+                    // For other recurring patterns, start from today
+                    initialDueDate = new Date();
+                }
+
+                if (timeFromText) {
+                    const hours = Math.floor(timeFromText / 60);
+                    const minutes = timeFromText % 60;
+                    initialDueDate.setHours(hours, minutes, 0, 0);
+                }
+            } else if (!parsedDate && !recurringPattern) {
+                // If no date is specified and no recurring pattern, default to today
+                initialDueDate = new Date();
+            }
+
+            // Create task with or without recurring pattern
+            const taskData: any = {
                 title: cleanTitle,
-                priority: 3,
+                priority: undefined, // No default priority
                 labelIds: [],
                 projectId: finalProjectId || undefined,
-                due: parsedDate ? parsedDate.getTime() : undefined,
-            });
+                due: initialDueDate ? initialDueDate.getTime() : undefined,
+            };
+
+            // Add recurring task fields if pattern detected
+            if (recurringPattern) {
+                taskData.isRecurring = true;
+                taskData.recurringPattern = recurringPattern.type;
+                taskData.recurringInterval = recurringPattern.interval;
+                taskData.recurringDayOfWeek = recurringPattern.dayOfWeek;
+                taskData.recurringDayOfMonth = recurringPattern.dayOfMonth;
+                taskData.recurringTime = timeFromText || recurringPattern.time;
+                taskData.originalDueDate = initialDueDate ? initialDueDate.getTime() : undefined;
+            }
+
+            console.log("Final task data:", taskData);
+
+            const createdTaskId = await createTask(taskData);
             setInput("");
+
+            toast.success("Task created!", {
+                description: `"${taskData.title}" has been added to your list.`,
+                action: {
+                    label: "Go to Task",
+                    onClick: () => navigateToTask({ ...taskData, _id: createdTaskId, projectId: finalProjectId }),
+                },
+            });
+
         } catch (error) {
             console.error("Failed to create task:", error);
         }
@@ -619,6 +750,14 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
 
             mediaRecorderRef.current.onstop = () => {
                 console.log("Recording stopped, processing audio... Total chunks:", audioChunksRef.current.length);
+
+                // Don't process if we're canceling
+                if (isCancelingRef.current) {
+                    console.log("Canceling detected, skipping audio processing");
+                    isCancelingRef.current = false;
+                    return;
+                }
+
                 // Process immediately - data should already be available
                 void processAudioBlob();
             };
@@ -772,6 +911,41 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
         }, 200);
     };
 
+    const cancelVoiceRecording = () => {
+        console.log("Canceling voice recording...");
+        isCancelingRef.current = true;
+
+        // Stop recording without processing
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+            console.log("Stopping MediaRecorder for cancellation");
+            mediaRecorderRef.current.stop();
+        }
+
+        if (recognitionRef.current) {
+            console.log("Stopping speech recognition for cancellation");
+            recognitionRef.current.stop();
+        }
+
+        if (timerRef.current) {
+            console.log("Clearing recording timer for cancellation");
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+        }
+
+        // Clear all recorded data
+        audioChunksRef.current = [];
+        setTranscript("");
+        setInterimTranscript("");
+        setRecordingTime(0);
+        setIsRecording(false);
+
+        // Clean up audio stream immediately
+        if (audioStreamRef.current) {
+            console.log("Stopping audio stream tracks for cancellation");
+            audioStreamRef.current.getTracks().forEach(track => track.stop());
+        }
+    };
+
     const processAudioBlob = async () => {
         console.log("Processing audio blob. Chunks available:", audioChunksRef.current.length);
         console.log("Recording time:", recordingTime, "seconds");
@@ -908,13 +1082,21 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                     }
                 }
 
-                await createTask({
+                const createdTaskId = await createTask({
                     title: taskData.title,
                     notes: taskData.notes,
                     projectId: taskProjectId,
                     priority: taskData.priority,
                     due: taskData.due ? new Date(taskData.due).getTime() : undefined,
                     labelIds,
+                });
+
+                toast.success("Task created!", {
+                    description: `"${taskData.title}" has been added to your list.`,
+                    action: {
+                        label: "Go to Task",
+                        onClick: () => navigateToTask({ ...taskData, _id: createdTaskId, projectId: taskProjectId }),
+                    },
                 });
             }
 
@@ -961,12 +1143,12 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                         onBlur={() => onFocusChange(false)}
                         placeholder="Add a task... Try: 'Buy groceries tomorrow #work urgent' (Cmd/Ctrl+K to focus)"
                         disabled={isRecording}
-                        className="h-10 pr-20 text-transparent"
+                        className="h-10 pr-20 text-white/10 caret-foreground text-base md:text-base"
                     />
                     {/* Overlay for styled elements */}
                     {input && (
-                        <div className="absolute inset-0 pointer-events-none flex items-center px-3">
-                            <div className="flex flex-wrap items-center gap-1">
+                        <div className="absolute inset-0 pointer-events-none flex items-center px-3 py-2.5 overflow-hidden">
+                            <div className="flex flex-wrap items-center gap-1 w-full">
                                 {renderStyledElements(input)}
                             </div>
                         </div>
@@ -982,55 +1164,44 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                     Add
                 </Button>
 
-                <Button
-                    type="button"
-                    onClick={() => void handleAICapture()}
-                    disabled={isProcessingAI}
-                    variant={isRecording ? "destructive" : "secondary"}
-                    size="lg"
-                >
-                    {isProcessingAI ? (
-                        "Processing..."
-                    ) : isRecording ? (
-                        <>
-                            <Square className="h-4 w-4 mr-1" />
-                            {recordingTime < 2 ? `Recording... ${recordingTime}s (need 2s+)` : `Done! ${recordingTime}s - Click to stop`}
-                        </>
-                    ) : input.trim() ? (
-                        <>
-                            <Sparkles className="h-4 w-4 mr-1" />
-                            AI Parse
-                        </>
-                    ) : hasMediaRecorder ? (
-                        <>
-                            <Mic className="h-4 w-4 mr-1" />
-                            AI Voice
-                        </>
-                    ) : (
-                        "AI Assistant"
-                    )}
-                </Button>
-            </form>
+                <Popover open={isRecording} onOpenChange={() => { }}>
+                    <PopoverTrigger asChild>
+                        <Button
+                            type="button"
+                            onClick={() => void handleAICapture()}
+                            disabled={isProcessingAI}
+                            variant={isRecording ? "destructive" : "secondary"}
+                            size="lg"
+                        >
+                            {isProcessingAI ? (
+                                "Processing..."
+                            ) : isRecording ? (
+                                <>
+                                    <div className="relative">
+                                        <div className="relative bg-red-500 w-4 h-4 rounded-full animate-pulse"></div>
+                                    </div>
+                                    {`Done ${recordingTime}s`}
+                                </>
+                            ) : input.trim() ? (
+                                <>
+                                    <Sparkles className="h-4 w-4 mr-1" />
+                                    AI Parse
+                                </>
+                            ) : hasMediaRecorder ? (
+                                <>
+                                    <Mic className="h-4 w-4 mr-1" />
+                                    AI Voice
+                                </>
+                            ) : (
+                                "AI Assistant"
+                            )}
+                        </Button>
+                    </PopoverTrigger>
+                    {isRecording && (
+                        <PopoverContent className="w-96 p-4 bg-black" align="end">
+                            <div className="space-y-4">
 
-
-
-            {/* Voice Recording Interface */}
-            {isRecording && (
-                <Card className="border-2 border-primary">
-                    <CardContent className="p-4 space-y-4">
-                        <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-                                <span className="text-sm font-medium">Recording... {formatTime(recordingTime)}</span>
-                            </div>
-                            <span className="text-xs text-muted-foreground">
-                                High-quality recording + Live captions
-                            </span>
-                        </div>
-
-                        {/* Live Captions */}
-                        <Card>
-                            <CardContent className="p-4 min-h-[100px] max-h-[200px] overflow-y-auto">
+                                {/* Live Captions */}
                                 {currentTranscript ? (
                                     <div className="space-y-2">
                                         <div className="flex flex-wrap gap-1">
@@ -1045,38 +1216,30 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                                     </div>
                                 ) : (
                                     <div className="text-center space-y-2">
-                                        <div className="flex items-center justify-center space-x-1">
-                                            {[...Array(5)].map((_, i) => (
-                                                <div
-                                                    key={i}
-                                                    className="w-1 bg-primary rounded-full animate-pulse"
-                                                    style={{
-                                                        height: `${15 + Math.random() * 15}px`,
-                                                        animationDelay: `${i * 0.1}s`,
-                                                    }}
-                                                />
-                                            ))}
-                                        </div>
-                                        <div className="text-muted-foreground text-sm">
-                                            Start speaking: "Buy groceries tomorrow urgent, call mom..."
+                                        <div className="text-muted-foreground text-sm pb-4 space-y-2">
+                                            <div className="flex items-center justify-center">
+                                                <video src="/globe.mp4" autoPlay loop muted className="w-[125px] object-cover" />
+                                            </div>
+                                            <div>Start speaking: <br /> "Buy groceries tomorrow urgent, call mom..."</div>
+                                            <div className="text-xs">Record for atleast 2 seconds</div>
                                         </div>
                                     </div>
                                 )}
-                            </CardContent>
-                        </Card>
 
-                        {/* Control Buttons */}
-                        <div className="flex justify-center space-x-3">
-                            <Button variant="outline" onClick={stopVoiceRecording}>
-                                Cancel
-                            </Button>
-                            <Button onClick={stopVoiceRecording}>
-                                Done - Process Tasks
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
-            )}
-        </div>
+                                {/* Control Buttons */}
+                                <div className="flex justify-center space-x-3 pb-2">
+                                    <Button variant="outline" onClick={cancelVoiceRecording} size="sm">
+                                        Cancel
+                                    </Button>
+                                    <Button onClick={stopVoiceRecording} size="sm">
+                                        Done - Process Tasks
+                                    </Button>
+                                </div>
+                            </div>
+                        </PopoverContent>
+                    )}
+                </Popover>
+            </form>
+        </div >
     );
 }

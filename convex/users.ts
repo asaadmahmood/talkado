@@ -7,167 +7,134 @@ import { v } from "convex/values";
 import { now } from "./_utils";
 
 /**
- * Get or create the current user
+ * Get the current user's persistent ID (email)
  */
-export const getOrCreateUser = mutation({
-  args: {},
-  returns: v.object({
-    _id: v.id("users"),
-    email: v.string(),
+async function getCurrentUserId(ctx: any): Promise<string> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) {
+    throw new Error("Not authenticated");
+  }
+
+  // Try to find user by identity subject first
+  const user = await ctx.db
+    .query("users")
+    .withIndex("by_identity", (q: any) =>
+      q.eq("identitySubject", identity.subject),
+    )
+    .first();
+
+  // If found, return the user's email as the persistent user ID
+  if (user) {
+    return user.email;
+  }
+
+  // If no user found, use the identity subject as fallback
+  // This handles the case where the user hasn't been created in the users table yet
+  return identity.subject;
+}
+
+/**
+ * Update user profile information
+ */
+export const update = mutation({
+  args: {
     name: v.optional(v.string()),
-    identitySubject: v.optional(v.string()),
-  }),
-  handler: async (ctx) => {
+    timezone: v.optional(v.string()),
+    profileImageUrl: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
     }
 
-    // Check if user exists by email
-    let user = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", identity.email || ""))
-      .first();
-
-    if (user) {
-      // Update the identity subject if it has changed or is missing
-      if (user.identitySubject !== identity.subject) {
-        await ctx.db.patch(user._id, {
-          identitySubject: identity.subject,
-          updatedAt: now(),
-        });
-        user = await ctx.db.get(user._id);
-      }
-    } else {
-      // Create new user
-      const userId = await ctx.db.insert("users", {
-        email: identity.email || "",
-        name: identity.name,
-        identitySubject: identity.subject,
-        createdAt: now(),
-        updatedAt: now(),
-      });
-      user = await ctx.db.get(userId);
-    }
-
-    if (!user) {
-      throw new Error("Failed to get or create user");
-    }
-
-    return {
-      _id: user._id,
-      email: user.email,
-      name: user.name,
-      identitySubject: user.identitySubject,
-    };
-  },
-});
-
-/**
- * Get the current user by identity subject
- */
-export const getCurrentUser = query({
-  args: {},
-  returns: v.union(
-    v.object({
-      _id: v.optional(v.id("users")),
-      email: v.string(),
-      name: v.optional(v.string()),
-      identitySubject: v.optional(v.string()),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) {
-      return null;
-    }
-
-    // Try to find user by email (safer approach)
+    // Find user by identity subject
     const user = await ctx.db
       .query("users")
-      .withIndex("by_email", (q: any) => q.eq("email", identity.email || ""))
+      .withIndex("by_identity", (q: any) =>
+        q.eq("identitySubject", identity.subject),
+      )
       .first();
 
-    // If user exists in users table, return it
-    if (user) {
-      return user;
+    if (!user) {
+      throw new Error("User not found");
     }
 
-    // If no user in users table, return identity information
-    // Since email and name are undefined, create a user-friendly display
-    const userDisplayName =
-      identity.subject.split("|").pop()?.slice(0, 8) || "User";
-
-    return {
-      _id: undefined,
-      email: `user-${userDisplayName}@example.com`, // Create a placeholder email
-      name: `User ${userDisplayName}`, // Create a placeholder name
-      identitySubject: identity.subject,
+    const updates: any = {
+      updatedAt: now(),
     };
+
+    if (args.name !== undefined) {
+      updates.name = args.name;
+    }
+
+    if (args.timezone !== undefined) {
+      updates.timezone = args.timezone;
+    }
+
+    if (args.profileImageUrl !== undefined) {
+      updates.profileImageUrl = args.profileImageUrl;
+    }
+
+    console.log("Updating user with:", updates);
+    console.log("User ID:", user._id);
+
+    await ctx.db.patch(user._id, updates);
+
+    console.log("User update completed");
+
+    return null;
   },
 });
 
 /**
- * Get user by email (for finding existing users)
+ * Update user email
  */
-export const getUserByEmail = query({
+export const updateEmail = mutation({
   args: {
     email: v.string(),
   },
-  returns: v.union(
-    v.object({
-      _id: v.id("users"),
-      email: v.string(),
-      name: v.optional(v.string()),
-      identitySubject: v.optional(v.string()),
-    }),
-    v.null(),
-  ),
-  handler: async (ctx, args) => {
-    const user = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
-      .first();
-
-    return user;
-  },
-});
-
-/**
- * Ensure user exists (called automatically on first access)
- */
-export const ensureUserExists = mutation({
-  args: {},
   returns: v.null(),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) {
       throw new Error("Not authenticated");
     }
 
-    // Check if user exists by email
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(args.email)) {
+      throw new Error("Invalid email format");
+    }
+
+    // Find user by identity subject
     const user = await ctx.db
       .query("users")
-      .withIndex("by_email", (q) => q.eq("email", identity.email || ""))
+      .withIndex("by_identity", (q: any) =>
+        q.eq("identitySubject", identity.subject),
+      )
       .first();
 
     if (!user) {
-      // Create new user
-      await ctx.db.insert("users", {
-        email: identity.email || "",
-        name: identity.name,
-        identitySubject: identity.subject,
-        createdAt: now(),
-        updatedAt: now(),
-      });
-    } else if (user.identitySubject !== identity.subject) {
-      // Update the identity subject if it has changed
-      await ctx.db.patch(user._id, {
-        identitySubject: identity.subject,
-        updatedAt: now(),
-      });
+      throw new Error("User not found");
     }
+
+    // Check if email is already taken by another user
+    const existingUser = await ctx.db
+      .query("users")
+      .withIndex("by_email", (q: any) => q.eq("email", args.email))
+      .first();
+
+    if (existingUser && existingUser._id !== user._id) {
+      throw new Error("Email is already taken by another user");
+    }
+
+    // Update user's email
+    await ctx.db.patch(user._id, {
+      email: args.email,
+      updatedAt: now(),
+    });
 
     return null;
   },

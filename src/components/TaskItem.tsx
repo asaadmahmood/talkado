@@ -3,8 +3,9 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { format } from "date-fns";
-import { MoreHorizontal, Check, Edit, Trash2, Flag, Calendar } from "lucide-react";
+import { MoreHorizontal, Check, Edit, Trash2, Flag, Calendar, Repeat } from "lucide-react";
 import { useTaskSelection } from "../contexts/TaskSelectionContext";
+import { toast } from "sonner";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,7 @@ interface Task {
     projectId?: Id<"projects">;
     title: string;
     notes?: string;
-    priority: number;
+    priority?: number;
     due?: number;
     completedAt?: number;
     deletedAt?: number;
@@ -28,6 +29,15 @@ interface Task {
     labelIds: Id<"labels">[];
     createdAt: number;
     updatedAt: number;
+    // Recurring task fields
+    isRecurring?: boolean;
+    recurringPattern?: string;
+    recurringInterval?: number;
+    recurringDayOfWeek?: number;
+    recurringDayOfMonth?: number;
+    recurringTime?: number;
+    nextDueDate?: number;
+    originalDueDate?: number;
 }
 
 interface TaskItemProps {
@@ -38,6 +48,7 @@ export default function TaskItem({ task }: TaskItemProps) {
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState(task.title);
     const deleteButtonRef = useRef<HTMLButtonElement>(null);
+    const isCompletingRef = useRef(false);
 
     const [isCompleting, setIsCompleting] = useState(false);
     const [isRemoving, setIsRemoving] = useState(false);
@@ -60,11 +71,25 @@ export default function TaskItem({ task }: TaskItemProps) {
         }
     }, [showDeleteDialog]);
 
+    // Debug isCompleting state
+    useEffect(() => {
+        console.log("isCompleting changed to:", isCompleting);
+    }, [isCompleting]);
+
+    // Prevent isCompleting from being reset when task data changes
+    useEffect(() => {
+        if (isCompletingRef.current && !isCompleting) {
+            console.log("Restoring isCompleting state from ref");
+            setIsCompleting(true);
+        }
+    }, [task.completedAt, isCompleting]);
+
     const projects = useQuery(api.projects.list);
     const labels = useQuery(api.labels.list);
     const toggleComplete = useMutation(api.tasks.toggleComplete);
     const updateTask = useMutation(api.tasks.update);
     const removeTask = useMutation(api.tasks.remove);
+    const undoRemoveTask = useMutation(api.tasks.undoRemove);
 
     const { openDetailsPanel } = useTaskSelection();
 
@@ -72,8 +97,11 @@ export default function TaskItem({ task }: TaskItemProps) {
     const taskLabels = labels?.filter(l => task.labelIds.includes(l._id)) || [];
 
     const handleToggleComplete = async () => {
+        console.log("handleToggleComplete called, task.completedAt:", task.completedAt);
+
         // If already completed, just toggle immediately
         if (task.completedAt) {
+            console.log("Task already completed, toggling immediately");
             void toggleComplete({ taskId: task._id }).catch((error) => {
                 console.error("Failed to toggle task completion:", error);
             });
@@ -81,25 +109,28 @@ export default function TaskItem({ task }: TaskItemProps) {
         }
 
         // For completing tasks, show animation sequence
+        console.log("Setting isCompleting to true");
         setIsCompleting(true);
 
-        // Wait for checkbox animation to complete
+        // Wait longer before completing the task to see the animation
         setTimeout(() => {
             void (async () => {
                 try {
                     // Actually complete the task
                     await toggleComplete({ taskId: task._id });
+                    console.log("Task completed, setting isCompleting to false");
+                    setIsCompleting(false);
 
-                    // Start removal animation after a brief pause to see the completion
+                    // Start removal animation after a brief pause
                     setTimeout(() => {
                         setIsRemoving(true);
-                    }, 200);
+                    }, 500);
                 } catch (error) {
                     console.error("Failed to toggle task completion:", error);
                     setIsCompleting(false);
                 }
             })();
-        }, 300); // Checkbox animation duration
+        }, 250); // Longer delay to see the animation
     };
 
     const handleSaveEdit = async () => {
@@ -124,10 +155,27 @@ export default function TaskItem({ task }: TaskItemProps) {
     };
 
     const confirmDelete = async () => {
-        void removeTask({ taskId: task._id }).catch((error) => {
+        try {
+            await removeTask({ taskId: task._id });
+            setShowDeleteDialog(false);
+
+            toast.success("Task deleted", {
+                description: `"${task.title}" has been moved to trash.`,
+                action: {
+                    label: "Undo",
+                    onClick: () => {
+                        void undoRemoveTask({ taskId: task._id }).catch((error) => {
+                            console.error("Failed to undo delete:", error);
+                            toast.error("Failed to restore task");
+                        });
+                    },
+                },
+                duration: 3000, // 3 seconds to undo
+            });
+        } catch (error) {
             console.error("Failed to delete task:", error);
-        });
-        setShowDeleteDialog(false);
+            toast.error("Failed to delete task");
+        }
     };
 
 
@@ -147,9 +195,27 @@ export default function TaskItem({ task }: TaskItemProps) {
             e.preventDefault();
             e.stopPropagation();
             // Delete directly without confirmation
-            void removeTask({ taskId: task._id }).catch((error) => {
-                console.error("Failed to delete task:", error);
-            });
+            void (async () => {
+                try {
+                    await removeTask({ taskId: task._id });
+                    toast.success("Task deleted", {
+                        description: `"${task.title}" has been moved to trash.`,
+                        action: {
+                            label: "Undo",
+                            onClick: () => {
+                                void undoRemoveTask({ taskId: task._id }).catch((error) => {
+                                    console.error("Failed to undo delete:", error);
+                                    toast.error("Failed to restore task");
+                                });
+                            },
+                        },
+                        duration: 3000, // 3 seconds to undo
+                    });
+                } catch (error) {
+                    console.error("Failed to delete task:", error);
+                    toast.error("Failed to delete task");
+                }
+            })();
             setIsDropdownOpen(false);
         }
     };
@@ -181,6 +247,47 @@ export default function TaskItem({ task }: TaskItemProps) {
         }
     };
 
+    const getRecurringText = (task: Task) => {
+        if (!task.isRecurring) return "";
+
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+        if (task.recurringPattern === "daily") {
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} days`
+                : "Daily";
+        } else if (task.recurringPattern === "weekly") {
+            if (task.recurringDayOfWeek !== undefined) {
+                return `Every ${dayNames[task.recurringDayOfWeek]}`;
+            }
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} weeks`
+                : "Weekly";
+        } else if (task.recurringPattern === "monthly") {
+            if (task.recurringDayOfMonth !== undefined) {
+                const suffix = getDaySuffix(task.recurringDayOfMonth);
+                return `Every ${task.recurringDayOfMonth}${suffix}`;
+            }
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} months`
+                : "Monthly";
+        } else if (task.recurringPattern === "yearly") {
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} years`
+                : "Yearly";
+        }
+        return "Recurring";
+    };
+
+    const getDaySuffix = (day: number) => {
+        if (day >= 11 && day <= 13) return "th";
+        switch (day % 10) {
+            case 1: return "st";
+            case 2: return "nd";
+            case 3: return "rd";
+            default: return "th";
+        }
+    };
 
 
     // Don't render completed tasks unless they're in the animation sequence
@@ -214,7 +321,7 @@ export default function TaskItem({ task }: TaskItemProps) {
                 }}
             >
                 {/* Checkbox */}
-                <div className="relative">
+                <div className="relative" onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                         checked={!!task.completedAt || isCompleting}
                         onCheckedChange={() => {
@@ -224,17 +331,24 @@ export default function TaskItem({ task }: TaskItemProps) {
                         }}
                         disabled={isCompleting || isRemoving}
                         className={cn(
-                            "w-6 h-6 rounded-full border-2 transition-all duration-300",
+                            "w-5 h-5 rounded-full border-2 transition-all duration-300 relative",
+                            // Priority-based border colors
+                            task.priority === 1 && "border-red-400 hover:bg-red-900",
+                            task.priority === 2 && "border-yellow-400 hover:bg-yellow-900",
+                            task.priority === 3 && "border-blue-400 hover:bg-blue-900",
+                            (!task.priority || task.priority === 4) && "border-gray-400",
                             isCompleting && "scale-110 bg-green-500 border-green-500",
                             (isCompleting || isRemoving) && "pointer-events-none"
                         )}
                     />
-                    {isCompleting && (
+                    {isCompleting ? (
                         <>
-                            <div className="absolute inset-0 rounded-full bg-green-500 opacity-20 animate-ping" />
-                            <Check className="absolute inset-0 w-4 h-4 text-white m-auto animate-bounce" />
+                            <div className="absolute top-0 left-0 w-5 h-5 rounded-full bg-green-500 opacity-20 animate-ping z-10" />
+                            <div className="absolute top-0 left-0 w-5 h-5 text-white flex items-center justify-center z-20 text-sm font-bold">
+                                ✓
+                            </div>
                         </>
-                    )}
+                    ) : null}
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -277,16 +391,24 @@ export default function TaskItem({ task }: TaskItemProps) {
                             </span>
                         )}
 
+                        {/* Recurring Indicator */}
+                        {task.isRecurring && (
+                            <span className="flex items-center text-purple-400">
+                                <Repeat className="h-3 w-3 mr-1" />
+                                {getRecurringText(task)}
+                            </span>
+                        )}
+
                         {/* Priority */}
                         <span className={cn(
                             "flex items-center",
                             task.priority === 1 && "text-red-400",
-                            task.priority === 2 && "text-orange-400",
+                            task.priority === 2 && "text-yellow-400",
                             task.priority === 3 && "text-blue-400",
-                            task.priority === 4 && "text-gray-400"
+                            (!task.priority || task.priority === 4) && "text-gray-400"
                         )}>
                             <Flag className="h-3 w-3 mr-1" />
-                            Priority {task.priority}
+                            {task.priority ? `P${task.priority}` : "No priority"}
                         </span>
 
                         {/* Project */}

@@ -3,17 +3,52 @@ import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { Folder } from "lucide-react";
+import { useEffect } from "react";
+import { useTaskSelection } from "../contexts/TaskSelectionContext";
 import TaskItem from "../components/TaskItem";
 import PageHeader from "../components/PageHeader";
 
 export default function ProjectPage() {
     const { projectId } = useParams<{ projectId: string }>();
+    const { openDetailsPanel } = useTaskSelection();
 
     const projects = useQuery(api.projects.list);
     const tasks = useQuery(
         api.tasks.listByProject,
         projectId ? { projectId: projectId as Id<"projects"> } : "skip"
     );
+
+    // Check if there's a task to open when the page loads
+    useEffect(() => {
+        const taskIdToOpen = sessionStorage.getItem('openTaskId');
+        if (taskIdToOpen && tasks) {
+            const taskToOpen = tasks.find(task => task._id === taskIdToOpen);
+            if (taskToOpen) {
+                openDetailsPanel(taskToOpen);
+                sessionStorage.removeItem('openTaskId');
+            }
+        }
+    }, [tasks, openDetailsPanel]);
+
+    // Listen for custom event when staying on the same page
+    useEffect(() => {
+        const handleOpenTask = (event: CustomEvent) => {
+            const { taskId } = event.detail;
+
+            if (tasks) {
+                const taskToOpen = tasks.find(task => task._id === taskId);
+                if (taskToOpen) {
+                    openDetailsPanel(taskToOpen);
+                }
+            }
+        };
+
+        window.addEventListener('openTask', handleOpenTask as EventListener);
+
+        return () => {
+            window.removeEventListener('openTask', handleOpenTask as EventListener);
+        };
+    }, [tasks, openDetailsPanel]);
 
     const project = projects?.find(p => p._id === projectId);
 

@@ -48,7 +48,7 @@ export const listToday = query({
       projectId: v.optional(v.id("projects")),
       title: v.string(),
       notes: v.optional(v.string()),
-      priority: v.number(),
+      priority: v.optional(v.number()),
       due: v.optional(v.number()),
       completedAt: v.optional(v.number()),
       deletedAt: v.optional(v.number()),
@@ -56,6 +56,15 @@ export const listToday = query({
       labelIds: v.array(v.id("labels")),
       createdAt: v.number(),
       updatedAt: v.number(),
+      // Recurring task fields
+      isRecurring: v.optional(v.boolean()),
+      recurringPattern: v.optional(v.string()),
+      recurringInterval: v.optional(v.number()),
+      recurringDayOfWeek: v.optional(v.number()),
+      recurringDayOfMonth: v.optional(v.number()),
+      recurringTime: v.optional(v.number()),
+      nextDueDate: v.optional(v.number()),
+      originalDueDate: v.optional(v.number()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -78,9 +87,11 @@ export const listToday = query({
 
     // Sort: completed? last; priority asc; due time asc; sort asc
     return tasks.sort((a, b) => {
-      // Priority ascending (1 is highest priority)
-      if (a.priority !== b.priority) {
-        return a.priority - b.priority;
+      // Priority ascending (1 is highest priority, undefined/null last)
+      const aPriority = a.priority ?? 999;
+      const bPriority = b.priority ?? 999;
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
       }
 
       // Due time ascending
@@ -107,7 +118,7 @@ export const listAll = query({
       projectId: v.optional(v.id("projects")),
       title: v.string(),
       notes: v.optional(v.string()),
-      priority: v.number(),
+      priority: v.optional(v.number()),
       due: v.optional(v.number()),
       completedAt: v.optional(v.number()),
       deletedAt: v.optional(v.number()),
@@ -115,6 +126,15 @@ export const listAll = query({
       labelIds: v.array(v.id("labels")),
       createdAt: v.number(),
       updatedAt: v.number(),
+      // Recurring task fields
+      isRecurring: v.optional(v.boolean()),
+      recurringPattern: v.optional(v.string()),
+      recurringInterval: v.optional(v.number()),
+      recurringDayOfWeek: v.optional(v.number()),
+      recurringDayOfMonth: v.optional(v.number()),
+      recurringTime: v.optional(v.number()),
+      nextDueDate: v.optional(v.number()),
+      originalDueDate: v.optional(v.number()),
     }),
   ),
   handler: async (ctx, _args) => {
@@ -133,9 +153,11 @@ export const listAll = query({
 
     // Sort by priority, then by due date, then by sort order
     return tasks.sort((a, b) => {
-      // Priority ascending (1 is highest priority)
-      if (a.priority !== b.priority) {
-        return a.priority - b.priority;
+      // Priority ascending (1 is highest priority, undefined/null last)
+      const aPriority = a.priority ?? 999;
+      const bPriority = b.priority ?? 999;
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
       }
 
       // Due date ascending (nulls last)
@@ -166,7 +188,7 @@ export const get = query({
       projectId: v.optional(v.id("projects")),
       title: v.string(),
       notes: v.optional(v.string()),
-      priority: v.number(),
+      priority: v.optional(v.number()),
       due: v.optional(v.number()),
       completedAt: v.optional(v.number()),
       deletedAt: v.optional(v.number()),
@@ -174,6 +196,15 @@ export const get = query({
       labelIds: v.array(v.id("labels")),
       createdAt: v.number(),
       updatedAt: v.number(),
+      // Recurring task fields
+      isRecurring: v.optional(v.boolean()),
+      recurringPattern: v.optional(v.string()),
+      recurringInterval: v.optional(v.number()),
+      recurringDayOfWeek: v.optional(v.number()),
+      recurringDayOfMonth: v.optional(v.number()),
+      recurringTime: v.optional(v.number()),
+      nextDueDate: v.optional(v.number()),
+      originalDueDate: v.optional(v.number()),
     }),
     v.null(),
   ),
@@ -204,7 +235,7 @@ export const listByProject = query({
       projectId: v.optional(v.id("projects")),
       title: v.string(),
       notes: v.optional(v.string()),
-      priority: v.number(),
+      priority: v.optional(v.number()),
       due: v.optional(v.number()),
       completedAt: v.optional(v.number()),
       deletedAt: v.optional(v.number()),
@@ -212,6 +243,15 @@ export const listByProject = query({
       labelIds: v.array(v.id("labels")),
       createdAt: v.number(),
       updatedAt: v.number(),
+      // Recurring task fields
+      isRecurring: v.optional(v.boolean()),
+      recurringPattern: v.optional(v.string()),
+      recurringInterval: v.optional(v.number()),
+      recurringDayOfWeek: v.optional(v.number()),
+      recurringDayOfMonth: v.optional(v.number()),
+      recurringTime: v.optional(v.number()),
+      nextDueDate: v.optional(v.number()),
+      originalDueDate: v.optional(v.number()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -244,9 +284,18 @@ export const create = mutation({
     title: v.string(),
     notes: v.optional(v.string()),
     projectId: v.optional(v.id("projects")),
-    priority: v.optional(v.number()),
+    priority: v.optional(v.union(v.number(), v.null())),
     due: v.optional(v.number()),
     labelIds: v.optional(v.array(v.id("labels"))),
+    // Recurring task fields
+    isRecurring: v.optional(v.boolean()),
+    recurringPattern: v.optional(v.string()),
+    recurringInterval: v.optional(v.number()),
+    recurringDayOfWeek: v.optional(v.number()),
+    recurringDayOfMonth: v.optional(v.number()),
+    recurringTime: v.optional(v.number()),
+    nextDueDate: v.optional(v.number()),
+    originalDueDate: v.optional(v.number()),
   },
   returns: v.id("tasks"),
   handler: async (ctx, args) => {
@@ -276,12 +325,21 @@ export const create = mutation({
       projectId: args.projectId,
       title: args.title.trim(),
       notes: args.notes?.trim(),
-      priority: args.priority ?? 3,
+      priority: args.priority ?? undefined,
       due: args.due,
       sort: generateSort(),
       labelIds: args.labelIds ?? [],
       createdAt: timestamp,
       updatedAt: timestamp,
+      // Recurring task fields
+      isRecurring: args.isRecurring ?? false,
+      recurringPattern: args.recurringPattern,
+      recurringInterval: args.recurringInterval,
+      recurringDayOfWeek: args.recurringDayOfWeek,
+      recurringDayOfMonth: args.recurringDayOfMonth,
+      recurringTime: args.recurringTime,
+      nextDueDate: args.nextDueDate,
+      originalDueDate: args.originalDueDate,
     });
 
     return taskId;
@@ -309,14 +367,91 @@ export const toggleComplete = mutation({
     }
 
     const timestamp = now();
-    await ctx.db.patch(args.taskId, {
-      completedAt: task.completedAt ? undefined : timestamp,
-      updatedAt: timestamp,
-    });
+    const isCompleting = !task.completedAt;
+
+    if (isCompleting && task.isRecurring && task.recurringPattern) {
+      // For recurring tasks, create the next occurrence
+      const nextDueDate = calculateNextDueDateForTask(task, timestamp);
+
+      await ctx.db.patch(args.taskId, {
+        completedAt: timestamp,
+        updatedAt: timestamp,
+        due: nextDueDate,
+      });
+    } else {
+      // Regular task completion
+      await ctx.db.patch(args.taskId, {
+        completedAt: task.completedAt ? undefined : timestamp,
+        updatedAt: timestamp,
+      });
+    }
 
     return null;
   },
 });
+
+// Helper function to calculate next due date for recurring tasks
+function calculateNextDueDateForTask(task: any, completedAt: number): number {
+  if (!task.isRecurring || !task.recurringPattern) {
+    return task.due || 0;
+  }
+
+  const currentDue = task.due ? new Date(task.due) : new Date();
+  const completedDate = new Date(completedAt);
+
+  switch (task.recurringPattern) {
+    case "daily": {
+      const nextDaily = new Date(completedDate);
+      nextDaily.setDate(nextDaily.getDate() + (task.recurringInterval || 1));
+      return nextDaily.getTime();
+    }
+
+    case "weekly": {
+      const nextWeekly = new Date(completedDate);
+      if (task.recurringDayOfWeek !== undefined) {
+        // Find next occurrence of specific day of week
+        const currentDay = nextWeekly.getDay();
+        let daysToAdd = task.recurringDayOfWeek - currentDay;
+        if (daysToAdd <= 0) daysToAdd += 7;
+        nextWeekly.setDate(nextWeekly.getDate() + daysToAdd);
+      } else {
+        nextWeekly.setDate(
+          nextWeekly.getDate() + 7 * (task.recurringInterval || 1),
+        );
+      }
+      return nextWeekly.getTime();
+    }
+
+    case "monthly": {
+      const nextMonthly = new Date(completedDate);
+      if (task.recurringDayOfMonth !== undefined) {
+        // Set to specific day of month
+        nextMonthly.setDate(task.recurringDayOfMonth);
+        // If we've passed this day this month, go to next month
+        if (nextMonthly <= completedDate) {
+          nextMonthly.setMonth(nextMonthly.getMonth() + 1);
+          nextMonthly.setDate(task.recurringDayOfMonth);
+        }
+      } else {
+        nextMonthly.setMonth(
+          nextMonthly.getMonth() + (task.recurringInterval || 1),
+        );
+      }
+      return nextMonthly.getTime();
+    }
+
+    case "yearly": {
+      const nextYearly = new Date(completedDate);
+      nextYearly.setFullYear(
+        nextYearly.getFullYear() + (task.recurringInterval || 1),
+      );
+      return nextYearly.getTime();
+    }
+
+    default:
+      return task.due || 0;
+  }
+}
 
 /**
  * Update a task
@@ -330,6 +465,15 @@ export const update = mutation({
     priority: v.optional(v.number()),
     due: v.optional(v.union(v.number(), v.null())),
     labelIds: v.optional(v.array(v.id("labels"))),
+    // Recurring task fields
+    isRecurring: v.optional(v.boolean()),
+    recurringPattern: v.optional(v.string()),
+    recurringInterval: v.optional(v.number()),
+    recurringDayOfWeek: v.optional(v.number()),
+    recurringDayOfMonth: v.optional(v.number()),
+    recurringTime: v.optional(v.number()),
+    nextDueDate: v.optional(v.number()),
+    originalDueDate: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -367,8 +511,10 @@ export const update = mutation({
     }
 
     if (args.priority !== undefined) {
-      if (args.priority < 1 || args.priority > 4) {
-        throw new Error("Priority must be between 1 and 4");
+      if (args.priority !== null && (args.priority < 1 || args.priority > 3)) {
+        throw new Error(
+          "Priority must be between 1 and 3, or null for no priority",
+        );
       }
       updates.priority = args.priority;
     }
@@ -386,6 +532,32 @@ export const update = mutation({
         }
       }
       updates.labelIds = args.labelIds;
+    }
+
+    // Handle recurring task fields
+    if (args.isRecurring !== undefined) {
+      updates.isRecurring = args.isRecurring;
+    }
+    if (args.recurringPattern !== undefined) {
+      updates.recurringPattern = args.recurringPattern;
+    }
+    if (args.recurringInterval !== undefined) {
+      updates.recurringInterval = args.recurringInterval;
+    }
+    if (args.recurringDayOfWeek !== undefined) {
+      updates.recurringDayOfWeek = args.recurringDayOfWeek;
+    }
+    if (args.recurringDayOfMonth !== undefined) {
+      updates.recurringDayOfMonth = args.recurringDayOfMonth;
+    }
+    if (args.recurringTime !== undefined) {
+      updates.recurringTime = args.recurringTime;
+    }
+    if (args.nextDueDate !== undefined) {
+      updates.nextDueDate = args.nextDueDate;
+    }
+    if (args.originalDueDate !== undefined) {
+      updates.originalDueDate = args.originalDueDate;
     }
 
     await ctx.db.patch(args.taskId, updates);
@@ -454,6 +626,63 @@ export const remove = mutation({
       deletedAt: now(),
       updatedAt: now(),
     });
+
+    return null;
+  },
+});
+
+/**
+ * Undo task deletion (restore deleted task)
+ */
+export const undoRemove = mutation({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx);
+
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+
+    if (task.userId !== userId) {
+      throw new Error("Not authorized");
+    }
+
+    await ctx.db.patch(args.taskId, {
+      deletedAt: undefined,
+      updatedAt: now(),
+    });
+
+    return null;
+  },
+});
+
+/**
+ * Clean up kanban column data from existing tasks (temporary)
+ */
+export const cleanupKanbanData = mutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx);
+
+    // Get all tasks for the user that have kanbanColumn
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .filter((q) => q.neq(q.field("kanbanColumn"), undefined))
+      .collect();
+
+    // Remove kanbanColumn from all tasks
+    for (const task of tasks) {
+      await ctx.db.patch(task._id, {
+        kanbanColumn: undefined,
+        updatedAt: now(),
+      });
+    }
 
     return null;
   },

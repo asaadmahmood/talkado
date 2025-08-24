@@ -32,6 +32,28 @@ export const DATE_PATTERNS = {
     /\b(last monday|last tuesday|last wednesday|last thursday|last friday|last saturday|last sunday)\b/gi,
   ],
 
+  // Recurring patterns
+  RECURRING: [
+    /\b(every day|daily|each day)\b/gi,
+    /\b(every \d+ days?)\b/gi,
+    /\b(each \d+ days?)\b/gi,
+    /\b(every week|weekly|each week)\b/gi,
+    /\b(every \d+ weeks?)\b/gi,
+    /\b(each \d+ weeks?)\b/gi,
+    /\b(every month|monthly|each month)\b/gi,
+    /\b(every \d+ months?)\b/gi,
+    /\b(each \d+ months?)\b/gi,
+    /\b(every year|yearly|each year|annually)\b/gi,
+    /\b(every \d+ years?)\b/gi,
+    /\b(each \d+ years?)\b/gi,
+    /\b(every (monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,
+    /\b(each (monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,
+    /\b(on (monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?)\b/gi,
+    /\b(every (\d{1,2})(st|nd|rd|th)?)\b/gi,
+    /\b(each (\d{1,2})(st|nd|rd|th)?)\b/gi,
+    /\b(on the (\d{1,2})(st|nd|rd|th)?)\b/gi,
+  ],
+
   // Month names (full and abbreviated)
   MONTHS: [
     /\b(january|jan)\b/gi,
@@ -193,6 +215,7 @@ export function getDatePatternsByCategory(
 export const {
   RELATIVE,
   WEEKDAYS,
+  RECURRING,
   MONTHS,
   ON_PREFIX,
   NO_PREFIX,

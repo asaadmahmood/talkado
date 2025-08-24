@@ -1,6 +1,8 @@
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { CheckSquare, AlertCircle, Calendar, Clock, Inbox } from "lucide-react";
+import { useEffect } from "react";
+import { useTaskSelection } from "../contexts/TaskSelectionContext";
 
 import { Card, CardContent } from "@/components/ui/card";
 import TaskItem from "../components/TaskItem";
@@ -9,6 +11,49 @@ import PageHeader from "../components/PageHeader";
 
 export default function AllPage() {
     const tasks = useQuery(api.tasks.listAll);
+    const { openDetailsPanel } = useTaskSelection();
+
+    // Check if there's a task to open when the page loads
+    useEffect(() => {
+        const taskIdToOpen = sessionStorage.getItem('openTaskId');
+        console.log('AllPage: Checking for task to open:', taskIdToOpen);
+        console.log('AllPage: Available tasks:', tasks?.map(t => ({ id: t._id, title: t.title })));
+
+        if (taskIdToOpen && tasks) {
+            const taskToOpen = tasks.find(task => task._id === taskIdToOpen);
+            console.log('AllPage: Found task to open:', taskToOpen);
+
+            if (taskToOpen) {
+                console.log('AllPage: Opening task details for:', taskToOpen.title);
+                openDetailsPanel(taskToOpen);
+                sessionStorage.removeItem('openTaskId');
+            } else {
+                console.log('AllPage: Task not found in tasks list');
+            }
+        }
+    }, [tasks, openDetailsPanel]);
+
+    // Listen for custom event when staying on the same page
+    useEffect(() => {
+        const handleOpenTask = (event: CustomEvent) => {
+            const { taskId } = event.detail;
+            console.log('AllPage: Received openTask event for taskId:', taskId);
+
+            if (tasks) {
+                const taskToOpen = tasks.find(task => task._id === taskId);
+                if (taskToOpen) {
+                    console.log('AllPage: Opening task details for:', taskToOpen.title);
+                    openDetailsPanel(taskToOpen);
+                }
+            }
+        };
+
+        window.addEventListener('openTask', handleOpenTask as EventListener);
+
+        return () => {
+            window.removeEventListener('openTask', handleOpenTask as EventListener);
+        };
+    }, [tasks, openDetailsPanel]);
 
     if (tasks === undefined) {
         return (

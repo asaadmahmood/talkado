@@ -12,7 +12,8 @@ import {
     Trash2,
     Edit2,
     Check,
-    Folder
+    Folder,
+    Repeat
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -24,6 +25,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 
 interface Task {
     _id: Id<"tasks">;
@@ -32,7 +34,7 @@ interface Task {
     projectId?: Id<"projects">;
     title: string;
     notes?: string;
-    priority: number;
+    priority?: number;
     due?: number;
     completedAt?: number;
     deletedAt?: number;
@@ -40,6 +42,15 @@ interface Task {
     labelIds: Id<"labels">[];
     createdAt: number;
     updatedAt: number;
+    // Recurring task fields
+    isRecurring?: boolean;
+    recurringPattern?: string;
+    recurringInterval?: number;
+    recurringDayOfWeek?: number;
+    recurringDayOfMonth?: number;
+    recurringTime?: number;
+    nextDueDate?: number;
+    originalDueDate?: number;
 }
 
 interface TaskDetailsPanelProps {
@@ -50,11 +61,13 @@ interface TaskDetailsPanelProps {
 export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDetailsPanelProps) {
     const [isEditingTitle, setIsEditingTitle] = useState(false);
     const [editTitle, setEditTitle] = useState(initialTask.title);
-    const [isEditingNotes, setIsEditingNotes] = useState(false);
-    const [editNotes, setEditNotes] = useState(initialTask.notes || "");
     const [showDatePicker, setShowDatePicker] = useState(false);
     const [showPriorityPicker, setShowPriorityPicker] = useState(false);
+    const [showProjectPicker, setShowProjectPicker] = useState(false);
+    const [isEditingNotes, setIsEditingNotes] = useState(false);
+    const [editNotes, setEditNotes] = useState(initialTask.notes || "");
     const [newComment, setNewComment] = useState("");
+    const [selectedRecurringPattern, setSelectedRecurringPattern] = useState<'daily' | 'weekly' | 'monthly' | null>(null);
 
     // Query the latest task data for real-time updates
     const currentTask = useQuery(api.tasks.get, { taskId: initialTask._id });
@@ -72,9 +85,9 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
 
     const priorityOptions = [
         { value: 1, label: "P1", icon: "🔴", color: "text-red-500" },
-        { value: 2, label: "P2", icon: "🟡", color: "text-orange-500" },
+        { value: 2, label: "P2", icon: "🟡", color: "text-yellow-500" },
         { value: 3, label: "P3", icon: "🔵", color: "text-blue-500" },
-        { value: 4, label: "P4", icon: "⚪", color: "text-gray-500" },
+        { value: undefined, label: "No priority", icon: "⚪", color: "text-gray-500" },
     ];
 
     const currentPriority = priorityOptions.find(p => p.value === task.priority);
@@ -106,14 +119,127 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
     };
 
     const handleDateSelect = async (date: Date | undefined) => {
+        const newDue = date ? date.getTime() : undefined;
+
+        if (task.isRecurring && date) {
+            // If task is recurring and date is selected, update the recurring pattern with new date
+            await updateTask({
+                taskId: task._id,
+                due: newDue,
+                recurringDayOfWeek: task.recurringPattern === 'weekly' ? date.getDay() : undefined,
+                recurringDayOfMonth: task.recurringPattern === 'monthly' ? date.getDate() : undefined,
+                originalDueDate: newDue,
+            });
+        } else {
+            // Regular date selection (no recurring or removing date)
+            await updateTask({
+                taskId: task._id,
+                due: newDue,
+                isRecurring: false,
+                recurringPattern: undefined
+            });
+        }
+
+        setShowDatePicker(false);
+        setSelectedRecurringPattern(null);
+    };
+
+    const handleMakeRecurring = async (pattern: 'daily' | 'weekly' | 'monthly') => {
+        // Use the existing date if available, otherwise open date picker
+        if (task.due) {
+            const existingDate = new Date(task.due);
+            await updateTask({
+                taskId: task._id,
+                isRecurring: true,
+                recurringPattern: pattern,
+                recurringInterval: 1,
+                recurringDayOfWeek: pattern === 'weekly' ? existingDate.getDay() : undefined,
+                recurringDayOfMonth: pattern === 'monthly' ? existingDate.getDate() : undefined,
+                originalDueDate: existingDate.getTime(),
+                due: existingDate.getTime(),
+            });
+        } else {
+            // No date selected, open date picker
+            setSelectedRecurringPattern(pattern);
+            setShowDatePicker(true);
+        }
+    };
+
+    const handleRecurringDateSelect = async (date: Date | undefined) => {
+        if (!selectedRecurringPattern) {
+            // If no recurring pattern is selected, use the regular date handler
+            await handleDateSelect(date);
+            return;
+        }
+
+        if (!date) {
+            // Remove recurring pattern but keep the date
+            await updateTask({
+                taskId: task._id,
+                isRecurring: false,
+                recurringPattern: undefined,
+                recurringInterval: undefined,
+                recurringDayOfWeek: undefined,
+                recurringDayOfMonth: undefined,
+                recurringTime: undefined,
+                originalDueDate: undefined,
+                // Keep the due date as is
+            });
+            setSelectedRecurringPattern(null);
+            setShowDatePicker(false);
+            return;
+        }
+
+        // Set recurring pattern with the selected date
         await updateTask({
             taskId: task._id,
-            due: date ? date.getTime() : undefined,
+            isRecurring: true,
+            recurringPattern: selectedRecurringPattern,
+            recurringInterval: 1,
+            recurringDayOfWeek: selectedRecurringPattern === 'weekly' ? date.getDay() : undefined,
+            recurringDayOfMonth: selectedRecurringPattern === 'monthly' ? date.getDate() : undefined,
+            originalDueDate: date.getTime(),
+            due: date.getTime(),
         });
+
+        setSelectedRecurringPattern(null);
         setShowDatePicker(false);
     };
 
-    const handlePriorityChange = async (priority: number) => {
+    const handleRemoveRecurring = async () => {
+        await updateTask({
+            taskId: task._id,
+            isRecurring: false,
+            recurringPattern: undefined,
+            recurringInterval: undefined,
+            recurringDayOfWeek: undefined,
+            recurringDayOfMonth: undefined,
+            recurringTime: undefined,
+            originalDueDate: undefined,
+            // Keep the due date as is
+        });
+    };
+
+    const handleToggleRecurring = async (checked: boolean) => {
+        if (!checked) {
+            // Turn off recurring
+            await handleRemoveRecurring();
+        } else {
+            // Turn on recurring - default to monthly
+            const targetDate = task.due ? new Date(task.due) : new Date();
+            await updateTask({
+                taskId: task._id,
+                isRecurring: true,
+                recurringPattern: 'monthly',
+                recurringInterval: 1,
+                recurringDayOfMonth: targetDate.getDate(),
+                originalDueDate: targetDate.getTime(),
+                due: targetDate.getTime(),
+            });
+        }
+    };
+
+    const handlePriorityChange = async (priority: number | undefined) => {
         await updateTask({
             taskId: task._id,
             priority,
@@ -150,6 +276,48 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
         if (timestamp < now) return "destructive";
         if (timestamp < today.getTime()) return "secondary";
         return "default";
+    };
+
+    const getRecurringText = (task: Task) => {
+        if (!task.isRecurring) return "";
+
+        const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+        if (task.recurringPattern === "daily") {
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} days`
+                : "Daily";
+        } else if (task.recurringPattern === "weekly") {
+            if (task.recurringDayOfWeek !== undefined) {
+                return `Every ${dayNames[task.recurringDayOfWeek]}`;
+            }
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} weeks`
+                : "Weekly";
+        } else if (task.recurringPattern === "monthly") {
+            if (task.recurringDayOfMonth !== undefined) {
+                const suffix = getDaySuffix(task.recurringDayOfMonth);
+                return `Every ${task.recurringDayOfMonth}${suffix}`;
+            }
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} months`
+                : "Monthly";
+        } else if (task.recurringPattern === "yearly") {
+            return task.recurringInterval && task.recurringInterval > 1
+                ? `Every ${task.recurringInterval} years`
+                : "Yearly";
+        }
+        return "Recurring";
+    };
+
+    const getDaySuffix = (day: number) => {
+        if (day >= 11 && day <= 13) return "th";
+        switch (day % 10) {
+            case 1: return "st";
+            case 2: return "nd";
+            case 3: return "rd";
+            default: return "th";
+        }
     };
 
     return (
@@ -234,56 +402,82 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
 
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-muted-foreground">Due Date</label>
-                        <Popover open={showDatePicker} onOpenChange={setShowDatePicker}>
+                        <Popover open={showDatePicker} onOpenChange={(open) => {
+                            // Don't close the popover if a recurring pattern is selected
+                            if (!open && selectedRecurringPattern) {
+                                return;
+                            }
+                            setShowDatePicker(open);
+                        }}>
                             <PopoverTrigger asChild>
                                 <Button variant="outline" className="w-full justify-start">
-                                    <CalendarIcon className="h-4 w-4 mr-2" />
-                                    {task.due ? formatDueDate(task.due) : "No date"}
+                                    <CalendarIcon className="h-4 w-4" />
+                                    {task.due ? (
+                                        <>
+                                            {format(new Date(task.due), "MMM d, yyyy")}
+                                            {task.isRecurring && (
+                                                <Repeat className="ml-2 h-4 w-4 text-muted-foreground" />
+                                            )}
+                                        </>
+                                    ) : (
+                                        <span>Pick a date</span>
+                                    )}
                                 </Button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-auto p-0">
+                            <PopoverContent className="w-[320px] p-0" align="start">
                                 <Calendar
                                     mode="single"
                                     selected={task.due ? new Date(task.due) : undefined}
-                                    onSelect={handleDateSelect}
+                                    onSelect={handleRecurringDateSelect}
                                     initialFocus
                                 />
-                                <div className="p-3 border-t">
-                                    <div className="flex space-x-2">
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => handleDateSelect(new Date())}
-                                            className="text-xs"
-                                        >
-                                            Today
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => {
-                                                const tomorrow = new Date();
-                                                tomorrow.setDate(tomorrow.getDate() + 1);
-                                                handleDateSelect(tomorrow);
-                                            }}
-                                            className="text-xs"
-                                        >
-                                            Tomorrow
-                                        </Button>
-                                        {task.due && (
-                                            <Button
-                                                size="sm"
-                                                variant="ghost"
-                                                onClick={() => handleDateSelect(undefined)}
-                                                className="text-xs"
-                                            >
-                                                Remove
-                                            </Button>
-                                        )}
+                                <div className="border-t p-3">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <p className="text-xs font-medium text-muted-foreground">Recurring</p>
+                                        <Switch
+                                            checked={task.isRecurring}
+                                            onCheckedChange={handleToggleRecurring}
+                                        />
                                     </div>
+
+                                    {task.isRecurring && (
+                                        <>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    variant={task.recurringPattern === 'daily' ? "default" : "outline"}
+                                                    onClick={() => void handleMakeRecurring('daily')}
+                                                    className="text-xs"
+                                                >
+                                                    <Repeat className="h-3 w-3 mr-1" />
+                                                    Daily
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant={task.recurringPattern === 'weekly' ? "default" : "outline"}
+                                                    onClick={() => void handleMakeRecurring('weekly')}
+                                                    className="text-xs"
+                                                >
+                                                    <Repeat className="h-3 w-3 mr-1" />
+                                                    Weekly
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant={task.recurringPattern === 'monthly' ? "default" : "outline"}
+                                                    onClick={() => void handleMakeRecurring('monthly')}
+                                                    className="text-xs"
+                                                >
+                                                    <Repeat className="h-3 w-3 mr-1" />
+                                                    Monthly
+                                                </Button>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             </PopoverContent>
                         </Popover>
+
+                        {/* Removed separate recurring task indicator - now integrated into due date */}
                     </div>
                     <div className="space-y-2">
                         <label className="text-sm font-medium text-muted-foreground">Priority</label>
@@ -297,7 +491,7 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
                             <DropdownMenuContent className="w-40">
                                 {priorityOptions.map((option) => (
                                     <DropdownMenuItem
-                                        key={option.value}
+                                        key={option.value ?? 'null'}
                                         onClick={() => handlePriorityChange(option.value)}
                                         className={task.priority === option.value ? "bg-muted" : ""}
                                     >

@@ -8,7 +8,7 @@ interface Task {
     projectId?: Id<"projects">;
     title: string;
     notes?: string;
-    priority: number;
+    priority?: number;
     due?: number;
     completedAt?: number;
     deletedAt?: number;

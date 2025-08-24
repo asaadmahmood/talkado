@@ -17,6 +17,7 @@ import type * as _utils from "../_utils.js";
 import type * as ai from "../ai.js";
 import type * as auth from "../auth.js";
 import type * as comments from "../comments.js";
+import type * as fileUpload from "../fileUpload.js";
 import type * as http from "../http.js";
 import type * as labels from "../labels.js";
 import type * as projects from "../projects.js";
@@ -36,6 +37,7 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   auth: typeof auth;
   comments: typeof comments;
+  fileUpload: typeof fileUpload;
   http: typeof http;
   labels: typeof labels;
   projects: typeof projects;

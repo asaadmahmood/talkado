@@ -1,7 +1,7 @@
 import { Authenticated, Unauthenticated } from "convex/react";
 import { Routes, Route, useLocation } from "react-router-dom";
 import { useAuthActions } from "@convex-dev/auth/react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
 import { useState, useEffect } from "react";
 import { Id } from "../convex/_generated/dataModel";
@@ -12,11 +12,13 @@ import QuickAdd from "./components/QuickAdd";
 import TodayPage from "./routes/TodayPage";
 import AllPage from "./routes/AllPage";
 import ProjectPage from "./routes/ProjectPage";
+import SettingsPage from "./routes/SettingsPage";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TaskSelectionProvider, useTaskSelection } from "./contexts/TaskSelectionContext";
 import TaskDetailsPanel from "./components/TaskDetailsPanel";
+import { Toaster } from "@/components/ui/sonner";
 
 export default function App() {
   // Apply dark theme to document root so Portal components inherit it
@@ -27,6 +29,20 @@ export default function App() {
     };
   }, []);
 
+  // Add debugging to check auth state
+  useEffect(() => {
+    console.log("App component mounted - checking auth state");
+  }, []);
+
+  // Force a call to getCurrentUser to check authentication state
+  const currentUser = useQuery(api.auth.getCurrentUser);
+  console.log("Current user from query:", currentUser);
+
+  // Add debugging to see when currentUser changes
+  useEffect(() => {
+    console.log("Current user changed:", currentUser);
+  }, [currentUser]);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       <Authenticated>
@@ -35,11 +51,14 @@ export default function App() {
       <Unauthenticated>
         <AuthPage />
       </Unauthenticated>
+      <Toaster />
     </div>
   );
 }
 
 function TodosApp() {
+  console.log("TodosApp component rendered - user is authenticated");
+
   return (
     <SidebarProvider
       style={
@@ -95,13 +114,16 @@ function TodosAppLayout() {
               </CardContent>
 
               {/* Page Content */}
-              <div className="flex-1 overflow-auto">
-                <Routes>
-                  <Route path="/" element={<TodayPage />} />
-                  <Route path="/today" element={<TodayPage />} />
-                  <Route path="/all" element={<AllPage />} />
-                  <Route path="/projects/:projectId" element={<ProjectPage />} />
-                </Routes>
+              <div className="container mx-auto py-8 max-w-4xl">
+                <div className="flex-1 overflow-auto">
+                  <Routes>
+                    <Route path="/" element={<TodayPage />} />
+                    <Route path="/today" element={<TodayPage />} />
+                    <Route path="/all" element={<AllPage />} />
+                    <Route path="/projects/:projectId" element={<ProjectPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                  </Routes>
+                </div>
               </div>
             </div>
           </div>
@@ -122,8 +144,13 @@ function TodosAppLayout() {
 }
 
 function AuthPage() {
+  console.log("AuthPage component rendered - user is not authenticated");
+
   const { signIn } = useAuthActions();
   const storeUserEmail = useMutation(api.auth.storeUserEmail);
+  const migrateUsers = useMutation(api.auth.migrateUsers);
+  const ensureUserExists = useMutation(api.auth.ensureUserExists);
+  const debugUserState = useQuery(api.auth.debugUserState);
   const [flow, setFlow] = useState<"signIn" | "signUp">("signIn");
   const [error, setError] = useState<string | null>(null);
 
@@ -140,26 +167,39 @@ function AuthPage() {
 
           <form
             className="space-y-4"
-            onSubmit={async (e) => {
+            onSubmit={(e) => {
               e.preventDefault();
               const formData = new FormData(e.target as HTMLFormElement);
               const email = formData.get("email") as string;
               formData.set("flow", flow);
 
-              try {
-                console.log("Starting sign-in process...");
-                const email = formData.get("email") as string;
-                console.log("Signing in with email:", email);
+              void (async () => {
+                try {
+                  console.log("Starting sign-in process...");
+                  const email = formData.get("email") as string;
+                  console.log("Signing in with email:", email);
 
-                // Store the email in localStorage before sign-in
-                localStorage.setItem("pendingUserEmail", email);
+                  // Store the email in localStorage before sign-in
+                  localStorage.setItem("pendingUserEmail", email);
 
-                await signIn("password", formData);
-                console.log("Sign-in successful");
-              } catch (error: any) {
-                console.error("Error during sign-in:", error);
-                setError(error.message);
-              }
+                  await signIn("password", formData);
+                  console.log("Sign-in successful");
+
+                  // Add debugging to check auth state
+                  setTimeout(() => {
+                    console.log("Checking auth state after sign-in...");
+                    // You can add more debugging here
+                  }, 1000);
+
+                  // Add more debugging to check auth state
+                  setTimeout(() => {
+                    console.log("Checking auth state 2 seconds after sign-in...");
+                  }, 2000);
+                } catch (error: any) {
+                  console.error("Error during sign-in:", error);
+                  setError(error.message);
+                }
+              })();
             }}
           >
             <div className="space-y-4">
@@ -179,6 +219,60 @@ function AuthPage() {
 
             <Button type="submit" className="w-full">
               {flow === "signIn" ? "Sign in" : "Sign up"}
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    console.log("Running user migration...");
+                    await migrateUsers();
+                    console.log("Migration completed");
+                    alert("User migration completed! Check the console for details.");
+                  } catch (error: any) {
+                    console.error("Migration failed:", error);
+                    alert("Migration failed: " + (error?.message || String(error)));
+                  }
+                })();
+              }}
+            >
+              Clean Up Duplicate Users
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                console.log("Current user state:", debugUserState);
+                alert("Check console for user state debug info");
+              }}
+            >
+              Debug User State
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    console.log("Ensuring user exists...");
+                    await ensureUserExists();
+                    console.log("User ensured");
+                    alert("User record created! Try signing in again.");
+                  } catch (error: any) {
+                    console.error("Failed to ensure user:", error);
+                    alert("Failed to ensure user: " + (error?.message || String(error)));
+                  }
+                })();
+              }}
+            >
+              Create User Record
             </Button>
 
             <div className="text-center">

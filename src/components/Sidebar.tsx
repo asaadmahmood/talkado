@@ -35,7 +35,7 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
     const labels = useQuery(api.labels.list);
     const createProject = useMutation(api.projects.create);
     const currentUser = useQuery(api.auth.getCurrentUser);
-    const setUserEmail = useMutation(api.auth.setUserEmail);
+    const setUserEmail = useMutation(api.auth.storeUserEmail);
 
 
 
@@ -48,12 +48,6 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
                 console.log("Found pending email:", pendingEmail);
                 void setUserEmail({ email: pendingEmail });
                 localStorage.removeItem("pendingUserEmail"); // Clean up
-            } else {
-                // Fallback: prompt the user to set their email
-                const userEmail = prompt("Please enter your email address:");
-                if (userEmail) {
-                    void setUserEmail({ email: userEmail });
-                }
             }
         }
     }, [currentUser, setUserEmail]);
@@ -62,7 +56,7 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
         user: {
             name: currentUser?.name || currentUser?.email?.split('@')[0] || "User",
             email: currentUser?.email || "user@todosplus.com",
-            avatar: "/avatars/user.jpg",
+            avatar: currentUser?.profileImageUrl || "/avatars/user.jpg",
         },
         navMain: [
             {
@@ -88,11 +82,6 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
             id: label._id,
         })) || [],
         navSecondary: [
-            {
-                title: "Settings",
-                url: "#",
-                icon: Settings,
-            },
             {
                 title: "Get Help",
                 url: "#",
