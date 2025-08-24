@@ -661,6 +661,55 @@ export const undoRemove = mutation({
 });
 
 /**
+ * Permanently delete a task (hard delete)
+ */
+export const hardRemove = mutation({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    console.log("hardRemove: Starting hard delete for task:", args.taskId);
+
+    const userId = await getCurrentUserId(ctx);
+    console.log("hardRemove: User ID:", userId);
+
+    const task = await ctx.db.get(args.taskId);
+    if (!task) {
+      console.log("hardRemove: Task not found:", args.taskId);
+      throw new Error("Task not found");
+    }
+
+    console.log(
+      "hardRemove: Found task:",
+      task._id,
+      "deletedAt:",
+      task.deletedAt,
+    );
+
+    if (task.userId !== userId) {
+      console.log("hardRemove: Not authorized for task:", args.taskId);
+      throw new Error("Not authorized");
+    }
+
+    // Only allow hard deletion of tasks that have been soft-deleted
+    if (!task.deletedAt) {
+      console.log("hardRemove: Task not soft-deleted:", args.taskId);
+      throw new Error("Task must be soft-deleted before hard deletion");
+    }
+
+    console.log(
+      "hardRemove: Proceeding with hard delete for task:",
+      args.taskId,
+    );
+    await ctx.db.delete(args.taskId);
+    console.log("hardRemove: Hard delete successful for task:", args.taskId);
+
+    return null;
+  },
+});
+
+/**
  * Clean up kanban column data from existing tasks (temporary)
  */
 export const cleanupKanbanData = mutation({

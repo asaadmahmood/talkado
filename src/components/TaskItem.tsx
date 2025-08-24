@@ -14,6 +14,34 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
+// Global timeout manager to handle hard deletes
+const hardDeleteTimeouts = new Map<string, NodeJS.Timeout>();
+
+const scheduleHardDelete = (taskId: string, callback: () => void) => {
+    // Clear any existing timeout for this task
+    if (hardDeleteTimeouts.has(taskId)) {
+        clearTimeout(hardDeleteTimeouts.get(taskId)!);
+    }
+
+    // Schedule new timeout
+    const timeout = setTimeout(() => {
+        console.log('Global timeout manager: Executing hard delete for task:', taskId);
+        callback();
+        hardDeleteTimeouts.delete(taskId);
+    }, 3000);
+
+    hardDeleteTimeouts.set(taskId, timeout);
+    console.log('Global timeout manager: Scheduled hard delete for task:', taskId);
+};
+
+const cancelHardDelete = (taskId: string) => {
+    if (hardDeleteTimeouts.has(taskId)) {
+        console.log('Global timeout manager: Canceling hard delete for task:', taskId);
+        clearTimeout(hardDeleteTimeouts.get(taskId)!);
+        hardDeleteTimeouts.delete(taskId);
+    }
+};
+
 interface Task {
     _id: Id<"tasks">;
     _creationTime: number;
@@ -55,6 +83,8 @@ export default function TaskItem({ task }: TaskItemProps) {
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
 
+    const undoClickedRef = useRef(false);
+
     // Focus the delete button when dialog opens
     useEffect(() => {
         if (showDeleteDialog) {
@@ -84,14 +114,23 @@ export default function TaskItem({ task }: TaskItemProps) {
         }
     }, [task.completedAt, isCompleting]);
 
+    // Cleanup timeouts on unmount
+    useEffect(() => {
+        return () => {
+            console.log('TaskItem: Component unmounting');
+            // Don't clear the global timeout - let it persist for hard delete
+        };
+    }, []);
+
     const projects = useQuery(api.projects.list);
     const labels = useQuery(api.labels.list);
     const toggleComplete = useMutation(api.tasks.toggleComplete);
     const updateTask = useMutation(api.tasks.update);
     const removeTask = useMutation(api.tasks.remove);
     const undoRemoveTask = useMutation(api.tasks.undoRemove);
+    const hardRemoveTask = useMutation(api.tasks.hardRemove);
 
-    const { openDetailsPanel } = useTaskSelection();
+    const { openDetailsPanel, closeDetailsPanel } = useTaskSelection();
 
     const project = projects?.find(p => p._id === task.projectId);
     const taskLabels = labels?.filter(l => task.labelIds.includes(l._id)) || [];
@@ -156,15 +195,38 @@ export default function TaskItem({ task }: TaskItemProps) {
 
     const confirmDelete = async () => {
         try {
+            undoClickedRef.current = false; // Reset for new deletion
+            console.log('TaskItem: Starting delete process for task:', task._id);
             await removeTask({ taskId: task._id });
             setShowDeleteDialog(false);
+            closeDetailsPanel(); // Close the details panel
+
+            // Schedule hard delete using global timeout manager
+            scheduleHardDelete(task._id, () => {
+                if (!undoClickedRef.current) {
+                    console.log('TaskItem: Executing hard delete for task:', task._id);
+                    void hardRemoveTask({ taskId: task._id }).then(() => {
+                        console.log('TaskItem: Hard delete successful for task:', task._id);
+                    }).catch((error) => {
+                        console.error("Failed to hard delete task:", error);
+                    });
+                } else {
+                    console.log('TaskItem: Skipping hard delete - undo was clicked for task:', task._id);
+                }
+            });
 
             toast.success("Task deleted", {
                 description: `"${task.title}" has been moved to trash.`,
                 action: {
                     label: "Undo",
                     onClick: () => {
-                        void undoRemoveTask({ taskId: task._id }).catch((error) => {
+                        console.log('TaskItem: Undo clicked for task:', task._id);
+                        undoClickedRef.current = true; // Mark undo as clicked
+                        cancelHardDelete(task._id); // Cancel the hard delete
+                        void undoRemoveTask({ taskId: task._id }).then(() => {
+                            // Reopen the details panel after undoing
+                            openDetailsPanel(task);
+                        }).catch((error) => {
                             console.error("Failed to undo delete:", error);
                             toast.error("Failed to restore task");
                         });
@@ -197,13 +259,37 @@ export default function TaskItem({ task }: TaskItemProps) {
             // Delete directly without confirmation
             void (async () => {
                 try {
+                    undoClickedRef.current = false; // Reset for new deletion
+                    console.log('TaskItem: Starting keyboard delete process for task:', task._id);
                     await removeTask({ taskId: task._id });
+                    closeDetailsPanel(); // Close the details panel
+
+                    // Schedule hard delete using global timeout manager
+                    scheduleHardDelete(task._id, () => {
+                        if (!undoClickedRef.current) {
+                            console.log('TaskItem: Executing keyboard hard delete for task:', task._id);
+                            void hardRemoveTask({ taskId: task._id }).then(() => {
+                                console.log('TaskItem: Keyboard hard delete successful for task:', task._id);
+                            }).catch((error) => {
+                                console.error("Failed to hard delete task:", error);
+                            });
+                        } else {
+                            console.log('TaskItem: Skipping keyboard hard delete - undo was clicked for task:', task._id);
+                        }
+                    });
+
                     toast.success("Task deleted", {
                         description: `"${task.title}" has been moved to trash.`,
                         action: {
                             label: "Undo",
                             onClick: () => {
-                                void undoRemoveTask({ taskId: task._id }).catch((error) => {
+                                console.log('TaskItem: Keyboard undo clicked for task:', task._id);
+                                undoClickedRef.current = true; // Mark undo as clicked
+                                cancelHardDelete(task._id); // Cancel the hard delete
+                                void undoRemoveTask({ taskId: task._id }).then(() => {
+                                    // Reopen the details panel after undoing
+                                    openDetailsPanel(task);
+                                }).catch((error) => {
                                     console.error("Failed to undo delete:", error);
                                     toast.error("Failed to restore task");
                                 });

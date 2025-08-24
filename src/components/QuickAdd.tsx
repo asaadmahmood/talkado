@@ -6,7 +6,7 @@ import { Mic, Sparkles, Plus, Flag, Calendar, Repeat } from "lucide-react";
 import { getAllDatePatterns } from "../utils/datePatterns";
 import { parseRecurringPattern, cleanRecurringText, parseTimeFromText, getAllRecurringPatterns } from "../utils/recurringPatterns";
 import { toast } from "sonner";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useTaskSelection } from "../contexts/TaskSelectionContext";
 
 import { Button } from "@/components/ui/button";
@@ -179,6 +179,7 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
     const [recordingTime, setRecordingTime] = useState(0);
     const isCancelingRef = useRef(false);
     const navigate = useNavigate();
+    const location = useLocation();
 
     const inputRef = useRef<HTMLInputElement>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -602,8 +603,11 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                     initialDueDate.setHours(hours, minutes, 0, 0);
                 }
             } else if (!parsedDate && !recurringPattern) {
-                // If no date is specified and no recurring pattern, default to today
-                initialDueDate = new Date();
+                // If no date is specified and no recurring pattern, default to today only if on Today page
+                const isOnTodayPage = location.pathname === '/' || location.pathname === '/today';
+                if (isOnTodayPage) {
+                    initialDueDate = new Date();
+                }
             }
 
             // Create task with or without recurring pattern
@@ -1198,7 +1202,7 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                         </Button>
                     </PopoverTrigger>
                     {isRecording && (
-                        <PopoverContent className="w-96 p-4 bg-black" align="end">
+                        <PopoverContent className="w-96 p-4 mt-2 bg-black rounded-lg" align="end">
                             <div className="space-y-4">
 
                                 {/* Live Captions */}
