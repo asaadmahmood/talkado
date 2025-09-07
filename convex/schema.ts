@@ -16,9 +16,23 @@ export default defineSchema({
     profileImageUrl: v.optional(v.string()),
     createdAt: v.optional(v.number()),
     updatedAt: v.optional(v.number()),
+    // Subscription fields
+    subscriptionTier: v.optional(v.union(v.literal("free"), v.literal("pro"))),
+    stripeCustomerId: v.optional(v.string()),
+    stripeSubscriptionId: v.optional(v.string()),
+    subscriptionStatus: v.optional(
+      v.union(
+        v.literal("active"),
+        v.literal("canceled"),
+        v.literal("past_due"),
+        v.literal("incomplete"),
+      ),
+    ),
+    subscriptionCurrentPeriodEnd: v.optional(v.number()),
   })
     .index("by_email", ["email"])
-    .index("by_identity", ["identitySubject"]),
+    .index("by_identity", ["identitySubject"])
+    .index("by_stripe_customer", ["stripeCustomerId"]),
 
   projects: defineTable({
     userId: v.string(), // Keep as string for backward compatibility
@@ -81,4 +95,19 @@ export default defineSchema({
   })
     .index("by_task", ["taskId"])
     .index("by_task_and_created", ["taskId", "createdAt"]),
+
+  // Subtasks belong to a parent task and are only shown in the task details view
+  subtasks: defineTable({
+    userId: v.string(), // Same user ownership as parent task
+    taskId: v.id("tasks"), // Parent task
+    title: v.string(),
+    completedAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
+    sort: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_task", ["taskId"]) // For listing within details panel
+    .index("by_task_and_completed", ["taskId", "completedAt"]) // For counting active subtasks
+    .index("by_task_and_deleted", ["taskId", "deletedAt"]),
 });

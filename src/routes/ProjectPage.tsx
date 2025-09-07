@@ -54,7 +54,7 @@ export default function ProjectPage() {
 
     if (tasks === undefined || projects === undefined) {
         return (
-            <div className="min-h-screen bg-background">
+            <div className="bg-background">
                 <div className=" p-6">
                     <div className="flex items-center justify-center h-64">
                         <div className="text-muted-foreground">Loading...</div>
@@ -66,7 +66,7 @@ export default function ProjectPage() {
 
     if (!project) {
         return (
-            <div className="min-h-screen bg-background">
+            <div className="bg-background">
                 <div className=" p-6">
                     <div className="text-center py-12">
                         <div className="text-muted-foreground text-6xl mb-4">📁</div>
@@ -86,7 +86,7 @@ export default function ProjectPage() {
     const completedTasks = tasks.filter(task => task.completedAt && !task.deletedAt);
 
     return (
-        <div className="min-h-screen bg-background">
+        <div className="bg-background">
             <div className="">
                 {/* Header */}
                 <PageHeader

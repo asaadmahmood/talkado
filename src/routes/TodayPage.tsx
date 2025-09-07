@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { ChevronRight, Clock, Calendar } from "lucide-react";
@@ -14,9 +14,37 @@ export default function TodayPage() {
     const [showOverdue, setShowOverdue] = useState(true);
     const tasks = useQuery(api.tasks.listToday, {});
 
+    // Update macOS Dock badge as soon as task data changes (must come before any early return)
+    useEffect(() => {
+        if (!tasks) return;
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const counts = tasks.reduce(
+            (acc, task) => {
+                if (task.completedAt) return acc;
+                if (!task.due) {
+                    acc.today += 1; // tasks without due date show in today
+                    return acc;
+                }
+                const taskDate = new Date(task.due);
+                const taskDay = new Date(taskDate.getFullYear(), taskDate.getMonth(), taskDate.getDate());
+                if (taskDay.getTime() < today.getTime()) acc.overdue += 1;
+                else acc.today += 1;
+                return acc;
+            },
+            { overdue: 0, today: 0 },
+        );
+        const badgeCount = counts.overdue + counts.today;
+        // @ts-expect-error: injected by Electron preload when running in desktop app
+        if (typeof window !== 'undefined' && window.desktop?.setDockBadge) {
+            // @ts-expect-error: injected by Electron preload
+            window.desktop.setDockBadge(badgeCount);
+        }
+    }, [tasks]);
+
     if (tasks === undefined) {
         return (
-            <div className="min-h-screen bg-background">
+            <div className="bg-background">
                 <div className=" p-6">
                     <div className="flex items-center justify-center h-64">
                         <div className="text-muted-foreground">Loading...</div>
@@ -53,8 +81,9 @@ export default function TodayPage() {
         return now.toLocaleDateString('en-US', options);
     };
 
+
     return (
-        <div className="min-h-screen bg-background">
+        <div className="bg-background">
             <div className="">
                 {/* Header */}
                 <PageHeader

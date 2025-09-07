@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -13,7 +13,9 @@ import {
     Edit2,
     Check,
     Folder,
-    Repeat
+    Repeat,
+    GripVertical,
+    MoreHorizontal,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -80,6 +82,25 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
 
     const projects = useQuery(api.projects.list);
     const labels = useQuery(api.labels.list);
+    const subtasks = useQuery(api.subtasks.list, { taskId: task._id });
+    const createSubtask = useMutation(api.subtasks.create);
+    const toggleSubtask = useMutation(api.subtasks.toggleComplete);
+    const updateSubtask = useMutation(api.subtasks.update);
+    const removeSubtask = useMutation(api.subtasks.remove);
+    const reorderSubtasks = useMutation(api.subtasks.reorder);
+    const [newSubtask, setNewSubtask] = useState("");
+    const [editingSubtaskId, setEditingSubtaskId] = useState<Id<"subtasks"> | null>(null);
+    const [editingSubtaskText, setEditingSubtaskText] = useState("");
+    const [draggingId, setDraggingId] = useState<Id<"subtasks"> | null>(null);
+    const [localOrder, setLocalOrder] = useState<Array<Id<"subtasks">> | null>(null);
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    const orderedSubtasks = useMemo(() => {
+        if (!subtasks) return subtasks;
+        if (!localOrder) return subtasks;
+        const indexOf = (id: Id<"subtasks">) => localOrder.indexOf(id);
+        return [...subtasks].sort((a, b) => indexOf(a._id) - indexOf(b._id));
+    }, [subtasks, localOrder]);
 
     const project = projects?.find(p => p._id === task.projectId);
 
@@ -320,6 +341,48 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
         }
     };
 
+    const handleAddSubtask = async () => {
+        const title = newSubtask.trim();
+        if (!title) return;
+        await createSubtask({ taskId: task._id, title }).catch(() => { });
+        setNewSubtask("");
+    };
+
+    const startEditSubtask = (id: Id<"subtasks">, currentTitle: string) => {
+        setEditingSubtaskId(id);
+        setEditingSubtaskText(currentTitle);
+    };
+
+    const saveEditSubtask = async () => {
+        if (!editingSubtaskId) return;
+        const trimmed = editingSubtaskText.trim();
+        if (trimmed.length === 0) {
+            setEditingSubtaskId(null);
+            setEditingSubtaskText("");
+            return;
+        }
+        await updateSubtask({ id: editingSubtaskId, title: trimmed }).catch(() => { });
+        setEditingSubtaskId(null);
+        setEditingSubtaskText("");
+    };
+
+    const handleRemoveSubtask = async (id: Id<"subtasks">) => {
+        await removeSubtask({ id }).catch(() => { });
+    };
+
+    const autoScrollOnDrag = (e: React.DragEvent) => {
+        const container = scrollRef.current;
+        if (!container) return;
+        const rect = container.getBoundingClientRect();
+        const y = e.clientY - rect.top;
+        const threshold = 32;
+        if (y < threshold) {
+            container.scrollBy({ top: -12, behavior: "auto" });
+        } else if (y > rect.height - threshold) {
+            container.scrollBy({ top: 12, behavior: "auto" });
+        }
+    };
+
     return (
         <div className="w-96 bg-background border-l h-full flex flex-col">
             {/* Header */}
@@ -331,7 +394,7 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
             </div>
 
             {/* Content */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-6">
+            <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
                 {/* Title */}
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-muted-foreground">Title</label>
@@ -504,6 +567,163 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
                     </div>
                 </div>
 
+                {/* Subtasks */}
+                <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                        <h3 className="font-medium">Subtasks</h3>
+                        <span className="text-xs text-muted-foreground">{subtasks?.filter(s => !s.completedAt).length || 0}/20</span>
+                    </div>
+
+                    {/* Add Subtask */}
+                    <div className="flex gap-2">
+                        <Input
+                            value={newSubtask}
+                            onChange={(e) => setNewSubtask(e.target.value)}
+                            placeholder="Add a subtask..."
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) {
+                                    e.preventDefault();
+                                    void handleAddSubtask();
+                                }
+                            }}
+                            className="flex-1"
+                        />
+                        <Button size="sm" onClick={() => void handleAddSubtask()} disabled={!newSubtask.trim()}>
+                            Add
+                        </Button>
+                    </div>
+
+                    {/* Subtasks list */}
+                    <div className="space-y-2">
+                        {orderedSubtasks?.map((s, idx) => (
+                            <div
+                                key={s._id}
+                                className={cn(
+                                    "flex items-center gap-2 group transition-transform",
+                                    draggingId === s._id && "opacity-70 scale-[0.995] bg-muted/30 rounded"
+                                )}
+                                onDragOver={(e) => {
+                                    e.preventDefault();
+                                    e.dataTransfer.dropEffect = "move";
+                                    autoScrollOnDrag(e);
+                                    if (!orderedSubtasks || !draggingId || draggingId === s._id) return;
+                                    const ids = (localOrder ?? orderedSubtasks.map((x) => x._id)).slice();
+                                    const from = ids.indexOf(draggingId);
+                                    const to = ids.indexOf(s._id);
+                                    if (from === -1 || to === -1 || from === to) return;
+                                    ids.splice(to, 0, ids.splice(from, 1)[0]);
+                                    setLocalOrder(ids);
+                                }}
+                                onDrop={async (e) => {
+                                    e.preventDefault();
+                                    if (!orderedSubtasks || !draggingId || draggingId === s._id) return;
+                                    const ids = (localOrder ?? orderedSubtasks.map((x) => x._id)).slice();
+                                    const from = ids.indexOf(draggingId);
+                                    const to = ids.indexOf(s._id);
+                                    if (from === -1 || to === -1) return;
+                                    ids.splice(to, 0, ids.splice(from, 1)[0]);
+                                    setLocalOrder(ids);
+                                    await reorderSubtasks({ ids }).catch(() => { });
+                                    setDraggingId(null);
+                                }}
+                                onDragEnter={(e) => {
+                                    if (!orderedSubtasks || !draggingId || draggingId === s._id) return;
+                                    const ids = (localOrder ?? orderedSubtasks.map((x) => x._id)).slice();
+                                    const from = ids.indexOf(draggingId);
+                                    const to = ids.indexOf(s._id);
+                                    if (from === -1 || to === -1 || from === to) return;
+                                    ids.splice(to, 0, ids.splice(from, 1)[0]);
+                                    setLocalOrder(ids);
+                                }}
+                            >
+                                {/* Drag handle */}
+                                <button
+                                    className="p-1 text-muted-foreground hover:text-foreground cursor-grab"
+                                    draggable
+                                    onDragStart={(e) => {
+                                        setDraggingId(s._id);
+                                        if (orderedSubtasks && !localOrder) {
+                                            setLocalOrder(orderedSubtasks.map((x) => x._id));
+                                        }
+                                        e.dataTransfer.effectAllowed = "move";
+                                        try { e.dataTransfer.setData("text/plain", String(s._id)); } catch { }
+                                    }}
+                                    onDragEnd={() => setDraggingId(null)}
+                                    aria-label="Drag to reorder"
+                                    aria-grabbed={draggingId === s._id}
+                                >
+                                    <GripVertical className="h-4 w-4" />
+                                </button>
+                                <div
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => void toggleSubtask({ id: s._id })}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter" || e.key === " ") {
+                                            e.preventDefault();
+                                            void toggleSubtask({ id: s._id });
+                                        }
+                                    }}
+                                    className={cn(
+                                        "w-5 h-5 rounded-full border-2 transition-all duration-200",
+                                        s.completedAt ? "bg-muted border-muted-foreground/50" : "border-gray-400 hover:bg-muted"
+                                    )}
+                                    aria-pressed={!!s.completedAt}
+                                />
+                                {editingSubtaskId === s._id ? (
+                                    <Input
+                                        value={editingSubtaskText}
+                                        onChange={(e) => setEditingSubtaskText(e.target.value)}
+                                        onBlur={() => void saveEditSubtask()}
+                                        onKeyDown={(e) => {
+                                            if (e.key === "Enter") {
+                                                e.preventDefault();
+                                                void saveEditSubtask();
+                                            } else if (e.key === "Escape") {
+                                                setEditingSubtaskId(null);
+                                                setEditingSubtaskText("");
+                                            }
+                                        }}
+                                        className="flex-1 h-8"
+                                        autoFocus
+                                    />
+                                ) : (
+                                    <div
+                                        className={cn(
+                                            "flex-1 text-sm cursor-pointer hover:text-primary",
+                                            s.completedAt && "line-through text-muted-foreground"
+                                        )}
+                                        onClick={() => startEditSubtask(s._id, s.title)}
+                                    >
+                                        {s.title}
+                                    </div>
+                                )}
+
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <DropdownMenu>
+                                        <DropdownMenuTrigger asChild>
+                                            <Button variant="ghost" size="icon">
+                                                <MoreHorizontal className="h-4 w-4" />
+                                            </Button>
+                                        </DropdownMenuTrigger>
+                                        <DropdownMenuContent align="end" className="w-32">
+                                            <DropdownMenuItem onClick={() => startEditSubtask(s._id, s.title)}>
+                                                <Edit2 className="h-4 w-4 mr-2" /> Edit
+                                            </DropdownMenuItem>
+                                            <DropdownMenuItem onClick={() => void handleRemoveSubtask(s._id)} className="text-destructive focus:text-destructive">
+                                                <Trash2 className="h-4 w-4 mr-2" /> Delete
+                                            </DropdownMenuItem>
+                                        </DropdownMenuContent>
+                                    </DropdownMenu>
+                                </div>
+                            </div>
+                        ))}
+                        {subtasks && subtasks.length === 0 && (
+                            <p className="text-sm text-muted-foreground">No subtasks yet.</p>
+                        )}
+                    </div>
+                </div>
+
                 {/* Description/Notes */}
                 <div className="space-y-2">
                     <label className="text-sm font-medium text-muted-foreground">Description</label>
@@ -535,67 +755,6 @@ export default function TaskDetailsPanel({ task: initialTask, onClose }: TaskDet
                             <Edit2 className="h-4 w-4 opacity-0 group-hover:opacity-100 transition-opacity absolute top-2 right-2" />
                         </div>
                     )}
-                </div>
-
-                <Separator />
-
-                {/* Comments */}
-                <div className="space-y-4">
-                    <div className="flex items-center gap-2">
-                        <MessageSquare className="h-4 w-4" />
-                        <h3 className="font-medium">Comments</h3>
-                        <Badge variant="secondary">{comments?.length || 0}</Badge>
-                    </div>
-
-                    {/* Add Comment */}
-                    <div className="flex gap-2">
-                        <Input
-                            value={newComment}
-                            onChange={(e) => setNewComment(e.target.value)}
-                            placeholder="Add a comment..."
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter" && !e.shiftKey) {
-                                    e.preventDefault();
-                                    handleAddComment();
-                                }
-                            }}
-                            className="flex-1"
-                        />
-                        <Button
-                            size="sm"
-                            onClick={handleAddComment}
-                            disabled={!newComment.trim()}
-                        >
-                            <Send className="h-4 w-4" />
-                        </Button>
-                    </div>
-
-                    {/* Comments List */}
-                    <div className="space-y-3 max-h-60 overflow-y-auto">
-                        {comments?.map((comment) => (
-                            <div key={comment._id} className="space-y-1 p-3 border rounded bg-muted/20">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-xs text-muted-foreground">
-                                        {format(new Date(comment.createdAt), "MMM d, yyyy 'at' h:mm a")}
-                                    </span>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-auto p-1 text-muted-foreground hover:text-destructive"
-                                        onClick={() => removeComment({ id: comment._id })}
-                                    >
-                                        <Trash2 className="h-3 w-3" />
-                                    </Button>
-                                </div>
-                                <p className="text-sm whitespace-pre-wrap">{comment.content}</p>
-                            </div>
-                        ))}
-                        {comments?.length === 0 && (
-                            <p className="text-sm text-muted-foreground text-center py-4">
-                                No comments yet. Add one above!
-                            </p>
-                        )}
-                    </div>
                 </div>
             </div>
         </div>

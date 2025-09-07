@@ -10,10 +10,10 @@ import {
     CheckSquare,
     Folder,
     GalleryVerticalEnd,
-    Settings,
     Search,
     HelpCircle,
 } from "lucide-react"
+import { useNavigate } from "react-router-dom";
 
 import { NavMain } from "./nav-main"
 import { NavDocuments } from "./nav-documents"
@@ -31,6 +31,7 @@ import {
 
 export default function CustomSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     const { signOut } = useAuthActions();
+    const navigate = useNavigate();
     const projects = useQuery(api.projects.list);
     const labels = useQuery(api.labels.list);
     const createProject = useMutation(api.projects.create);
@@ -51,6 +52,9 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
             }
         }
     }, [currentUser, setUserEmail]);
+
+    const isMac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform);
+    const searchTitle = `Search (${isMac ? "⌘K" : "Ctrl+K"})`;
 
     const data = {
         user: {
@@ -88,7 +92,7 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
                 icon: HelpCircle,
             },
             {
-                title: "Search",
+                title: searchTitle,
                 url: "#",
                 icon: Search,
             },
@@ -122,7 +126,16 @@ export default function CustomSidebar({ ...props }: React.ComponentProps<typeof 
                 <NavSecondary items={data.navSecondary} className="mt-auto" />
             </SidebarContent>
             <SidebarFooter>
-                <NavUser user={data.user} onSignOut={() => { void signOut(); }} />
+                <NavUser
+                    user={data.user}
+                    onSignOut={() => {
+                        void signOut()
+                            .catch(() => { })
+                            .finally(() => {
+                                void navigate("/auth/signin", { replace: true });
+                            });
+                    }}
+                />
             </SidebarFooter>
         </Sidebar>
     );

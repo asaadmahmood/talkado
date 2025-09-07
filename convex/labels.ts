@@ -16,11 +16,10 @@ async function getCurrentUserId(ctx: any): Promise<string> {
   }
 
   // Try to find user by identity subject first
+  const identityBase = identity.subject.split("|")[0];
   const user = await ctx.db
     .query("users")
-    .withIndex("by_identity", (q: any) =>
-      q.eq("identitySubject", identity.subject),
-    )
+    .withIndex("by_identity", (q: any) => q.eq("identitySubject", identityBase))
     .first();
 
   // If found, return the user's email as the persistent user ID
@@ -30,7 +29,7 @@ async function getCurrentUserId(ctx: any): Promise<string> {
 
   // If no user found, use the identity subject as fallback
   // This handles the case where the user hasn't been created in the users table yet
-  return identity.subject;
+  return identityBase;
 }
 
 /**

@@ -2,14 +2,18 @@
  * User management functions
  */
 
-import { query, mutation } from "./_generated/server";
+import {
+  query as _query,
+  mutation,
+  internalMutation,
+} from "./_generated/server";
 import { v } from "convex/values";
 import { now } from "./_utils";
 
 /**
  * Get the current user's persistent ID (email)
  */
-async function getCurrentUserId(ctx: any): Promise<string> {
+async function _getCurrentUserId(ctx: any): Promise<string> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) {
     throw new Error("Not authenticated");
@@ -136,6 +140,71 @@ export const updateEmail = mutation({
       updatedAt: now(),
     });
 
+    return null;
+  },
+});
+
+/**
+ * Permanently delete the current user's data and account.
+ * This removes tasks, comments, projects, labels, and the user document.
+ * Internal only; orchestrated by an action that may also cancel Stripe first.
+ */
+export const deleteUserAndData = internalMutation({
+  args: { identitySubject: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    // Find user by identity
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_identity", (q: any) =>
+        q.eq("identitySubject", args.identitySubject),
+      )
+      .first();
+
+    if (!user) {
+      return null;
+    }
+
+    const userKey: string = user.email;
+
+    // Delete tasks (and their comments)
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_user", (q: any) => q.eq("userId", userKey))
+      .collect();
+
+    for (const task of tasks) {
+      // Delete comments for this task
+      const comments = await ctx.db
+        .query("comments")
+        .withIndex("by_task", (q: any) => q.eq("taskId", task._id))
+        .collect();
+      for (const c of comments) {
+        await ctx.db.delete(c._id);
+      }
+      await ctx.db.delete(task._id);
+    }
+
+    // Delete labels
+    const labels = await ctx.db
+      .query("labels")
+      .withIndex("by_user", (q: any) => q.eq("userId", userKey))
+      .collect();
+    for (const label of labels) {
+      await ctx.db.delete(label._id);
+    }
+
+    // Delete projects (including archived)
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_user", (q: any) => q.eq("userId", userKey))
+      .collect();
+    for (const project of projects) {
+      await ctx.db.delete(project._id);
+    }
+
+    // Finally, delete the user document
+    await ctx.db.delete(user._id);
     return null;
   },
 });

@@ -73,6 +73,33 @@ const FormItemContext = React.createContext<FormItemContextValue>(
   {} as FormItemContextValue
 )
 
+// Convert noisy/technical errors into concise, user‑friendly messages
+function normalizeErrorMessage(msg: string): string {
+  const text = (msg || "").toString()
+
+  if (/invalid\s*secret/i.test(text) || /invalidsecret/i.test(text)) {
+    return "Incorrect email or password."
+  }
+
+  if (/retrieveaccount|authorize|handlecredentials/i.test(text)) {
+    return "We couldn’t verify your credentials. Please check your email and password."
+  }
+
+  if (/cannot\s*read\s*properties\s*of\s*null/i.test(text) || /reading\s*'_id'/i.test(text)) {
+    return "We couldn’t find that account. Try signing up or use a different email."
+  }
+
+  if (/no matching routes found/i.test(text) && /webhook/i.test(text)) {
+    return "Our billing server is updating. Please try again in a moment."
+  }
+
+  if (/no configuration provided.*billing portal/i.test(text)) {
+    return "Billing portal isn’t configured yet. Please try again later."
+  }
+
+  return text
+}
+
 function FormItem({ className, ...props }: React.ComponentProps<"div">) {
   const id = React.useId()
 
@@ -137,7 +164,14 @@ function FormDescription({ className, ...props }: React.ComponentProps<"p">) {
 
 function FormMessage({ className, ...props }: React.ComponentProps<"p">) {
   const { error, formMessageId } = useFormField()
-  const body = error ? String(error?.message ?? "") : props.children
+  const raw = error
+    ? String(error?.message ?? "")
+    : (typeof props.children === "string"
+      ? props.children
+      : (React.isValidElement(props.children)
+        ? ""
+        : String((props as any).children ?? "")))
+  const body = normalizeErrorMessage(raw)
 
   if (!body) {
     return null

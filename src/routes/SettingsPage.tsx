@@ -1,19 +1,21 @@
 import { useState, useRef, useEffect } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { useAuthActions } from "@convex-dev/auth/react";
 import { useMutation, useQuery, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { Id } from "../../convex/_generated/dataModel";
-import { User, Camera, Mail, Lock, Clock, Save, Search } from "lucide-react";
+import { User, Camera, Lock, Save, Trash2 } from "lucide-react";
 import timezonesData from "../utils/timezones.json";
+import SubscriptionManager from "../components/SubscriptionManager";
 
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
+
 import { useToast } from "@/hooks/use-toast";
 import { Toast } from "@/components/ui/toast";
-import { cn } from "@/lib/utils";
+
 
 // Type for timezone data
 interface TimezoneData {
@@ -27,7 +29,7 @@ interface TimezoneData {
 const getUserLocalTimezone = (): string => {
     try {
         return Intl.DateTimeFormat().resolvedOptions().timeZone;
-    } catch (error) {
+    } catch {
         console.warn("Could not detect local timezone, falling back to UTC");
         return "UTC";
     }
@@ -50,7 +52,10 @@ const getFilteredTimezones = (search: string) => {
 };
 
 export default function SettingsPage() {
+    const navigate = useNavigate();
+    const location = useLocation();
     const [isLoading, setIsLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState<'settings' | 'password' | 'subscription' | 'delete'>('settings');
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [currentPassword, setCurrentPassword] = useState("");
@@ -67,6 +72,7 @@ export default function SettingsPage() {
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast, toasts, dismiss } = useToast();
+    const { signOut } = useAuthActions();
 
     // Get current user data
     const user = useQuery(api.auth.getCurrentUser);
@@ -74,6 +80,15 @@ export default function SettingsPage() {
     const updatePassword = useMutation(api.auth.updatePassword);
     const storeProfileImage = useAction(api.fileUpload.storeProfileImage);
     const updateEmail = useMutation(api.users.updateEmail);
+    const deleteAccount = useAction(api.stripeActions.deleteAccount);
+
+    // Keep tabs in sync with URL
+    useEffect(() => {
+        const segment = location.pathname.split("/")[2] || "settings";
+        if (segment === "settings" || segment === "password" || segment === "subscription" || segment === "delete") {
+            setActiveTab(segment);
+        }
+    }, [location.pathname]);
 
     // Initialize form with user data
     useEffect(() => {
@@ -140,7 +155,7 @@ export default function SettingsPage() {
             console.log("User data changed, resetting form");
             setHasInitializedPreview(false);
         }
-    }, [user?.subject]); // Reset when the user identity changes
+    }, [user]); // Reset when the user identity changes
 
     const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
@@ -232,7 +247,7 @@ export default function SettingsPage() {
             // The user query should automatically refresh due to Convex reactivity
 
 
-        } catch (error) {
+        } catch {
             toast({
                 title: "Error",
                 description: "Failed to update profile. Please try again.",
@@ -277,10 +292,37 @@ export default function SettingsPage() {
                 title: "Password updated",
                 description: "Your password has been successfully updated.",
             });
-        } catch (error) {
+        } catch {
             toast({
                 title: "Error",
                 description: "Failed to update password. Please check your current password.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        const confirmed = window.confirm(
+            "This will permanently delete your account, projects, tasks, and labels. This cannot be undone. Continue?",
+        );
+        if (!confirmed) return;
+        setIsLoading(true);
+        try {
+            await deleteAccount({});
+            // Best-effort sign out to invalidate session
+            await signOut().catch(() => { });
+            toast({
+                title: "Account deleted",
+                description: "Your account and all associated data have been removed.",
+            });
+            // After deletion, a sign-out/redirect would typically occur. For now, refresh.
+            window.location.href = "/";
+        } catch (err: any) {
+            toast({
+                title: "Failed to delete account",
+                description: err?.message || "Please try again.",
                 variant: "destructive",
             });
         } finally {
@@ -345,234 +387,286 @@ export default function SettingsPage() {
                 {/* Header */}
                 <div>
                     <h1 className="text-3xl font-bold">Settings</h1>
-                    <p className="text-gray-600 mt-2">Manage your account settings and preferences.</p>
+                    <p className="text-gray-300 mt-2">Manage your account settings and preferences.</p>
                 </div>
 
-                {/* Profile Section */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <User className="h-5 w-5" />
-                            Profile Information
-                        </CardTitle>
-                        <CardDescription>
-                            Update your personal information and profile picture.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-6">
-                        {/* Profile Picture */}
-                        <div className="flex items-center gap-6">
-                            <div className="relative">
-                                <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 border-2 border-gray-200">
-                                    {previewUrl ? (
-                                        <img
-                                            src={previewUrl}
-                                            alt="Profile"
-                                            className="w-full h-full object-cover"
-                                        />
-                                    ) : (
-                                        <div className="w-full h-full flex items-center justify-center">
-                                            <User className="h-8 w-8 text-gray-400" />
+                {/* Tabs */}
+                <Tabs
+                    value={activeTab}
+                    onValueChange={(v) => {
+                        const value = v as 'settings' | 'password' | 'subscription' | 'delete';
+                        setActiveTab(value);
+                        // Navigation intentionally fired without awaiting
+                        void navigate(value === 'settings' ? '/settings' : `/settings/${value}`);
+                    }}
+                >
+                    <TabsList>
+                        <TabsTrigger value="settings">Settings</TabsTrigger>
+                        <TabsTrigger value="password">Password</TabsTrigger>
+                        <TabsTrigger value="subscription">Subscription</TabsTrigger>
+                        <TabsTrigger value="delete">Delete</TabsTrigger>
+                    </TabsList>
+
+                    {/* Profile Section */}
+                    <TabsContent value="settings">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <User className="h-5 w-5" />
+                                    Profile Information
+                                </CardTitle>
+                                <CardDescription>
+                                    Update your personal information and profile picture.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                                {/* Profile Picture */}
+                                <div className="flex items-center gap-6">
+                                    <div className="relative">
+                                        <div className="w-24 h-24 rounded-full overflow-hidden bg-gray-100 border-2 border-gray-200">
+                                            {previewUrl ? (
+                                                <img
+                                                    src={previewUrl}
+                                                    alt="Profile"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center">
+                                                    <User className="h-8 w-8 text-gray-400" />
+                                                </div>
+                                            )}
                                         </div>
-                                    )}
-                                </div>
-                                <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="absolute -bottom-2 -right-2 h-8 w-8 p-0 rounded-full"
-                                    onClick={() => fileInputRef.current?.click()}
-                                >
-                                    <Camera className="h-4 w-4" />
-                                </Button>
-                            </div>
-                            <div>
-                                <p className="text-sm font-medium">Profile Picture</p>
-                                <p className="text-sm text-gray-500">
-                                    Upload a new profile picture (max 5MB)
-                                </p>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept="image/*"
-                                    onChange={handleImageUpload}
-                                    className="hidden"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Name */}
-                        <div className="space-y-2">
-                            <Label htmlFor="name">Full Name</Label>
-                            <Input
-                                id="name"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                placeholder="Enter your full name"
-                            />
-                        </div>
-
-                        {/* Email */}
-                        <div className="space-y-2">
-                            <Label htmlFor="email">Email Address</Label>
-                            {isChangingEmail ? (
-                                <div className="space-y-2">
-                                    <Input
-                                        id="new-email"
-                                        type="email"
-                                        value={newEmail}
-                                        onChange={(e) => setNewEmail(e.target.value)}
-                                        placeholder="Enter new email address"
-                                    />
-                                    <div className="flex gap-2">
-                                        <Button
-                                            size="sm"
-                                            onClick={handleUpdateEmail}
-                                            disabled={isChangingEmail}
-                                        >
-                                            {isChangingEmail ? "Updating..." : "Update Email"}
-                                        </Button>
                                         <Button
                                             size="sm"
                                             variant="outline"
-                                            onClick={() => {
-                                                setIsChangingEmail(false);
-                                                setNewEmail("");
-                                            }}
+                                            className="absolute -bottom-2 -right-2 h-8 w-8 p-0 rounded-full"
+                                            onClick={() => fileInputRef.current?.click()}
                                         >
-                                            Cancel
+                                            <Camera className="h-4 w-4" />
                                         </Button>
                                     </div>
+                                    <div>
+                                        <p className="text-sm font-medium">Profile Picture</p>
+                                        <p className="text-sm text-gray-500">
+                                            Upload a new profile picture (max 5MB)
+                                        </p>
+                                        <input
+                                            ref={fileInputRef}
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={handleImageUpload}
+                                            className="hidden"
+                                        />
+                                    </div>
                                 </div>
-                            ) : (
-                                <div className="space-y-2">
-                                    <Input
-                                        id="email"
-                                        value={email}
-                                        disabled
-                                        className="bg-gray-50"
-                                    />
-                                    <Button
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => setIsChangingEmail(true)}
-                                    >
-                                        Change Email
-                                    </Button>
-                                </div>
-                            )}
-                        </div>
 
-                        {/* Timezone */}
-                        <div className="space-y-2">
-                            <Label htmlFor="timezone">Timezone</Label>
-                            <div className="relative" id="timezone-container">
-                                <Input
-                                    id="timezone"
-                                    value={timezoneSearch}
-                                    onChange={(e) => {
-                                        setTimezoneSearch(e.target.value);
-                                        setShowTimezoneDropdown(true);
-                                    }}
-                                    onFocus={() => setShowTimezoneDropdown(true)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Escape') {
-                                            setShowTimezoneDropdown(false);
-                                        }
-                                    }}
-                                    placeholder="Search for a timezone (e.g., New York, London, Tokyo)"
-                                    className="w-full"
-                                />
-                                {showTimezoneDropdown && (
-                                    <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                                        {getFilteredTimezones(timezoneSearch).map((tz) => (
-                                            <button
-                                                key={tz.value}
-                                                className="w-full px-4 py-2 text-left hover:bg-gray-700 focus:bg-gray-700 focus:outline-none text-white"
-                                                onClick={(e) => {
-                                                    e.preventDefault();
-                                                    e.stopPropagation();
-                                                    console.log('Timezone clicked:', tz.label, tz.value);
-                                                    setTimezone(tz.value);
-                                                    setTimezoneSearch(tz.label);
-                                                    setShowTimezoneDropdown(false);
-                                                }}
+                                {/* Name */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="name">Full Name</Label>
+                                    <Input
+                                        id="name"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="Enter your full name"
+                                    />
+                                </div>
+
+                                {/* Email */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="email">Email Address</Label>
+                                    {isChangingEmail ? (
+                                        <div className="space-y-2">
+                                            <Input
+                                                id="new-email"
+                                                type="email"
+                                                value={newEmail}
+                                                onChange={(e) => setNewEmail(e.target.value)}
+                                                placeholder="Enter new email address"
+                                            />
+                                            <div className="flex gap-2">
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => void handleUpdateEmail()}
+                                                    disabled={isChangingEmail}
+                                                >
+                                                    {isChangingEmail ? "Updating..." : "Update Email"}
+                                                </Button>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={() => {
+                                                        setIsChangingEmail(false);
+                                                        setNewEmail("");
+                                                    }}
+                                                >
+                                                    Cancel
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            <Input
+                                                id="email"
+                                                value={email}
+                                                disabled
+                                                className="bg-gray-50"
+                                            />
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => setIsChangingEmail(true)}
                                             >
-                                                {tz.label}
-                                            </button>
-                                        ))}
-                                        {getFilteredTimezones(timezoneSearch).length === 0 && (
-                                            <div className="px-4 py-2 text-gray-400">
-                                                No timezones found
+                                                Change Email
+                                            </Button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Timezone */}
+                                <div className="space-y-2">
+                                    <Label htmlFor="timezone">Timezone</Label>
+                                    <div className="relative" id="timezone-container">
+                                        <Input
+                                            id="timezone"
+                                            value={timezoneSearch}
+                                            onChange={(e) => {
+                                                setTimezoneSearch(e.target.value);
+                                                setShowTimezoneDropdown(true);
+                                            }}
+                                            onFocus={() => setShowTimezoneDropdown(true)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Escape') {
+                                                    setShowTimezoneDropdown(false);
+                                                }
+                                            }}
+                                            placeholder="Search for a timezone (e.g., New York, London, Tokyo)"
+                                            className="w-full"
+                                        />
+                                        {showTimezoneDropdown && (
+                                            <div className="absolute z-50 w-full mt-1 bg-gray-800 border border-gray-600 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                                                {getFilteredTimezones(timezoneSearch).map((tz) => (
+                                                    <button
+                                                        key={tz.value}
+                                                        className="w-full px-4 py-2 text-left hover:bg-gray-700 focus:bg-gray-700 focus:outline-none text-white"
+                                                        onClick={(e) => {
+                                                            e.preventDefault();
+                                                            e.stopPropagation();
+                                                            console.log('Timezone clicked:', tz.label, tz.value);
+                                                            setTimezone(tz.value);
+                                                            setTimezoneSearch(tz.label);
+                                                            setShowTimezoneDropdown(false);
+                                                        }}
+                                                    >
+                                                        {tz.label}
+                                                    </button>
+                                                ))}
+                                                {getFilteredTimezones(timezoneSearch).length === 0 && (
+                                                    <div className="px-4 py-2 text-gray-400">
+                                                        No timezones found
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
                                     </div>
-                                )}
-                            </div>
-                        </div>
+                                </div>
 
-                        <Button onClick={handleSaveProfile} disabled={isLoading}>
-                            <Save className="h-4 w-4 mr-2" />
-                            {isLoading ? "Saving..." : "Save Profile"}
-                        </Button>
-                    </CardContent>
-                </Card>
+                                <Button onClick={() => void handleSaveProfile()} disabled={isLoading}>
+                                    <Save className="h-4 w-4 mr-2" />
+                                    {isLoading ? "Saving..." : "Save Profile"}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
 
-                <Separator />
+                    {/* Password Section */}
+                    <TabsContent value="password">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Lock className="h-5 w-5" />
+                                    Change Password
+                                </CardTitle>
+                                <CardDescription>
+                                    Update your password to keep your account secure.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="space-y-2">
+                                    <Label htmlFor="current-password">Current Password</Label>
+                                    <Input
+                                        id="current-password"
+                                        type="password"
+                                        value={currentPassword}
+                                        onChange={(e) => setCurrentPassword(e.target.value)}
+                                        placeholder="Enter your current password"
+                                    />
+                                </div>
 
-                {/* Password Section */}
-                <Card>
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Lock className="h-5 w-5" />
-                            Change Password
-                        </CardTitle>
-                        <CardDescription>
-                            Update your password to keep your account secure.
-                        </CardDescription>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="current-password">Current Password</Label>
-                            <Input
-                                id="current-password"
-                                type="password"
-                                value={currentPassword}
-                                onChange={(e) => setCurrentPassword(e.target.value)}
-                                placeholder="Enter your current password"
-                            />
-                        </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="new-password">New Password</Label>
+                                    <Input
+                                        id="new-password"
+                                        type="password"
+                                        value={newPassword}
+                                        onChange={(e) => setNewPassword(e.target.value)}
+                                        placeholder="Enter your new password"
+                                    />
+                                </div>
 
-                        <div className="space-y-2">
-                            <Label htmlFor="new-password">New Password</Label>
-                            <Input
-                                id="new-password"
-                                type="password"
-                                value={newPassword}
-                                onChange={(e) => setNewPassword(e.target.value)}
-                                placeholder="Enter your new password"
-                            />
-                        </div>
+                                <div className="space-y-2">
+                                    <Label htmlFor="confirm-password">Confirm New Password</Label>
+                                    <Input
+                                        id="confirm-password"
+                                        type="password"
+                                        value={confirmPassword}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                        placeholder="Confirm your new password"
+                                    />
+                                </div>
 
-                        <div className="space-y-2">
-                            <Label htmlFor="confirm-password">Confirm New Password</Label>
-                            <Input
-                                id="confirm-password"
-                                type="password"
-                                value={confirmPassword}
-                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                placeholder="Confirm your new password"
-                            />
-                        </div>
+                                <Button
+                                    onClick={() => void handleUpdatePassword()}
+                                    disabled={isLoading || !currentPassword || !newPassword || !confirmPassword}
+                                >
+                                    <Lock className="h-4 w-4 mr-2" />
+                                    {isLoading ? "Updating..." : "Update Password"}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
 
-                        <Button
-                            onClick={handleUpdatePassword}
-                            disabled={isLoading || !currentPassword || !newPassword || !confirmPassword}
-                        >
-                            <Lock className="h-4 w-4 mr-2" />
-                            {isLoading ? "Updating..." : "Update Password"}
-                        </Button>
-                    </CardContent>
-                </Card>
+                    {/* Subscription Section */}
+                    <TabsContent value="subscription">
+                        <SubscriptionManager />
+                    </TabsContent>
+
+                    {/* Delete Account Section */}
+                    <TabsContent value="delete">
+                        <Card className="border-red-900/40 bg-red-900/10">
+                            <CardHeader>
+                                <CardTitle className="flex items-center gap-2 text-red-400">
+                                    <Trash2 className="h-5 w-5" />
+                                    Delete account
+                                </CardTitle>
+                                <CardDescription>
+                                    Permanently remove your account and all data.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <Button
+                                    variant="destructive"
+                                    onClick={() => {
+                                        void handleDeleteAccount();
+                                    }}
+                                    disabled={isLoading}
+                                >
+                                    <Trash2 className="h-4 w-4 mr-2" />
+                                    {isLoading ? "Deleting..." : "Delete account"}
+                                </Button>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
+                </Tabs>
             </div>
         </div>
     );

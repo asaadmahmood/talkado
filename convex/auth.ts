@@ -34,12 +34,11 @@ export const getCurrentUser = query({
     // Debug: Log the identity subject we're searching for
     console.log("Searching for user with identity subject:", identity.subject);
 
-    // Try to find user in users table by identity subject
+    // Try to find user in users table by identity subject (stable base part)
+    const identityBase = identity.subject.split("|")[0];
     const user = await ctx.db
       .query("users")
-      .withIndex("by_identity", (q) =>
-        q.eq("identitySubject", identity.subject),
-      )
+      .withIndex("by_identity", (q) => q.eq("identitySubject", identityBase))
       .first();
 
     // Debug: Log what we found
@@ -74,6 +73,7 @@ export const getCurrentUser = query({
 export const storeUserEmail = mutation({
   args: {
     email: v.string(),
+    name: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -89,26 +89,29 @@ export const storeUserEmail = mutation({
       args.email,
     );
 
-    // Check if user already exists by identity subject
+    // Check if user already exists by identity subject (stable base part)
+    const identityBase = identity.subject.split("|")[0];
     const existingUser = await ctx.db
       .query("users")
-      .withIndex("by_identity", (q) =>
-        q.eq("identitySubject", identity.subject),
-      )
+      .withIndex("by_identity", (q) => q.eq("identitySubject", identityBase))
       .first();
 
     console.log("Existing user found by identity:", existingUser);
 
     if (existingUser) {
       // Update existing user's email if it's different
+      const patch: Record<string, any> = { updatedAt: now() };
       if (existingUser.email !== args.email) {
-        console.log("Updating existing user with new email:", args.email);
-        await ctx.db.patch(existingUser._id, {
-          email: args.email,
-          updatedAt: now(),
-        });
+        patch.email = args.email;
+      }
+      if (args.name && args.name.trim() && existingUser.name !== args.name) {
+        patch.name = args.name.trim();
+      }
+      if (Object.keys(patch).length > 1) {
+        console.log("Patching existing user with:", patch);
+        await ctx.db.patch(existingUser._id, patch);
       } else {
-        console.log("User already has the same email, no update needed");
+        console.log("User already up to date, no patch needed");
       }
     } else {
       // Also check if a user with this email already exists
@@ -120,16 +123,21 @@ export const storeUserEmail = mutation({
       if (userByEmail) {
         // Update the existing user with the new identity subject
         console.log("Found user by email, updating identity subject");
-        await ctx.db.patch(userByEmail._id, {
-          identitySubject: identity.subject,
+        const patch: Record<string, any> = {
+          identitySubject: identityBase,
           updatedAt: now(),
-        });
+        };
+        if (args.name && args.name.trim()) {
+          patch.name = args.name.trim();
+        }
+        await ctx.db.patch(userByEmail._id, patch);
       } else {
         // Create new user
         console.log("Creating new user with email:", args.email);
         await ctx.db.insert("users", {
           email: args.email,
-          identitySubject: identity.subject,
+          identitySubject: identityBase,
+          name: args.name && args.name.trim() ? args.name.trim() : undefined,
           createdAt: now(),
           updatedAt: now(),
         });

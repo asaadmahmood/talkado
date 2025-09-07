@@ -57,7 +57,7 @@ export default function AllPage() {
 
     if (tasks === undefined) {
         return (
-            <div className="min-h-screen bg-background">
+            <div className="bg-background">
                 <div className=" p-6">
                     <div className="flex items-center justify-center h-64">
                         <div className="text-muted-foreground">Loading...</div>
@@ -118,7 +118,7 @@ export default function AllPage() {
     };
 
     return (
-        <div className="min-h-screen bg-background">
+        <div className="bg-background">
             <div className="">
                 {/* Header */}
                 <PageHeader

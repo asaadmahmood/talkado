@@ -196,6 +196,7 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
     const createTask = useMutation(api.tasks.create);
     const aiCapture = useAction(api.ai.capture);
     const transcribeAudio = useAction(api.ai.transcribe);
+    const subscription = useQuery(api.stripe.getSubscription);
     const { openDetailsPanel } = useTaskSelection();
 
     // Function to navigate to task and open details
@@ -647,6 +648,30 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
             console.error("Failed to create task:", error);
         }
     };
+
+    // Global "type to add" focus behavior
+    useEffect(() => {
+        const handler = (e: KeyboardEvent) => {
+            // Ignore if modifier keys pressed or it's not a visible character
+            if (e.metaKey || e.ctrlKey || e.altKey) return;
+            const target = e.target as HTMLElement | null;
+            // If focus is already inside an input/textarea/contenteditable or a dialog, don't steal focus
+            const isTypingTarget = !!target && (
+                target.tagName === 'INPUT' ||
+                target.tagName === 'TEXTAREA' ||
+                (target as any).isContentEditable ||
+                target.closest('[role="dialog"]') !== null
+            );
+            if (isTypingTarget) return;
+
+            // Only handle printable keys
+            if (e.key.length === 1) {
+                inputRef.current?.focus();
+            }
+        };
+        window.addEventListener('keydown', handler, { capture: true });
+        return () => window.removeEventListener('keydown', handler, { capture: true } as any);
+    }, []);
 
     const startVoiceRecording = async () => {
         try {
@@ -1172,7 +1197,19 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                     <PopoverTrigger asChild>
                         <Button
                             type="button"
-                            onClick={() => void handleAICapture()}
+                            onClick={() => {
+                                if (!subscription?.canUseAI) {
+                                    toast.error("AI Voice Input requires Pro subscription", {
+                                        description: "Upgrade to Pro to use voice commands for creating tasks.",
+                                        action: {
+                                            label: "Upgrade",
+                                            onClick: () => window.location.href = "/settings",
+                                        },
+                                    });
+                                    return;
+                                }
+                                void handleAICapture();
+                            }}
                             disabled={isProcessingAI}
                             variant={isRecording ? "destructive" : "secondary"}
                             size="lg"
@@ -1197,7 +1234,10 @@ export default function QuickAdd({ focused, onFocusChange, projectId }: QuickAdd
                                     AI Voice
                                 </>
                             ) : (
-                                "AI Assistant"
+                                <>
+                                    <Sparkles className="h-4 w-4 mr-1" />
+                                    AI
+                                </>
                             )}
                         </Button>
                     </PopoverTrigger>

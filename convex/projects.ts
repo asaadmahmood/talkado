@@ -16,11 +16,10 @@ async function getCurrentUserId(ctx: any): Promise<string> {
   }
 
   // Try to find user by identity subject first
+  const identityBase = identity.subject.split("|")[0];
   const user = await ctx.db
     .query("users")
-    .withIndex("by_identity", (q: any) =>
-      q.eq("identitySubject", identity.subject),
-    )
+    .withIndex("by_identity", (q: any) => q.eq("identitySubject", identityBase))
     .first();
 
   // If found, return the user's email as the persistent user ID
@@ -30,7 +29,7 @@ async function getCurrentUserId(ctx: any): Promise<string> {
 
   // If no user found, use the identity subject as fallback
   // This handles the case where the user hasn't been created in the users table yet
-  return identity.subject;
+  return identityBase;
 }
 
 /**
@@ -76,6 +75,36 @@ export const create = mutation({
   returns: v.id("projects"),
   handler: async (ctx, args) => {
     const userId = await getCurrentUserId(ctx);
+
+    // Check subscription and project limit
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_identity", (q) => q.eq("identitySubject", userId))
+      .first();
+
+    if (user) {
+      const isPro =
+        user.subscriptionTier === "pro" &&
+        user.subscriptionStatus === "active" &&
+        (!user.subscriptionCurrentPeriodEnd ||
+          user.subscriptionCurrentPeriodEnd > Date.now());
+
+      const projectLimit = isPro ? 15 : 5;
+
+      // Count existing projects
+      const existingProjects = await ctx.db
+        .query("projects")
+        .withIndex("by_user_and_archived", (q) =>
+          q.eq("userId", userId).eq("archivedAt", undefined),
+        )
+        .collect();
+
+      if (existingProjects.length >= projectLimit) {
+        throw new Error(
+          `Project limit reached. Free users can create up to ${projectLimit} projects. Upgrade to Pro for more projects.`,
+        );
+      }
+    }
 
     const timestamp = now();
     const projectId = await ctx.db.insert("projects", {

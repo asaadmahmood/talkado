@@ -1,5 +1,5 @@
-import { Authenticated, Unauthenticated } from "convex/react";
-import { Routes, Route, useLocation } from "react-router-dom";
+// Removed Authenticated/Unauthenticated wrappers; we gate on getCurrentUser
+import { Routes, Route, useLocation, Navigate, Outlet } from "react-router-dom";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../convex/_generated/api";
@@ -14,11 +14,28 @@ import AllPage from "./routes/AllPage";
 import ProjectPage from "./routes/ProjectPage";
 import SettingsPage from "./routes/SettingsPage";
 import { Card, CardContent } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TaskSelectionProvider, useTaskSelection } from "./contexts/TaskSelectionContext";
 import TaskDetailsPanel from "./components/TaskDetailsPanel";
 import { Toaster } from "@/components/ui/sonner";
+import RouteSwitcher from "./components/RouteSwitcher";
+
+function normalizeAuthErrorMessage(msg: string): string {
+  const text = (msg || "").toString();
+  if (/invalid\s*secret/i.test(text) || /invalidsecret/i.test(text)) {
+    return "Incorrect email or password.";
+  }
+  if (/retrieveaccount|authorize|handlecredentials/i.test(text)) {
+    return "We couldn’t verify your credentials. Please check your email and password.";
+  }
+  if (/cannot\s*read\s*properties\s*of\s*null/i.test(text) || /reading\s*'_id'/i.test(text)) {
+    return "We couldn’t find that account. Try signing up or use a different email.";
+  }
+  return "Something went wrong. Please try again.";
+}
 
 export default function App() {
   // Apply dark theme to document root so Portal components inherit it
@@ -36,7 +53,7 @@ export default function App() {
 
   // Force a call to getCurrentUser to check authentication state
   const currentUser = useQuery(api.auth.getCurrentUser);
-  console.log("Current user from query:", currentUser);
+  const isSignedIn = !!(currentUser && currentUser.email);
 
   // Add debugging to see when currentUser changes
   useEffect(() => {
@@ -44,21 +61,50 @@ export default function App() {
   }, [currentUser]);
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <Authenticated>
-        <TodosApp />
-      </Authenticated>
-      <Unauthenticated>
-        <AuthPage />
-      </Unauthenticated>
+    <div className="bg-background text-foreground">
+      {/* Public and protected routes at the top level so /auth routes work without app shell */}
+      <Routes>
+        {/* Public auth routes */}
+        <Route path="/auth/*" element={<AuthRoutes />} />
+
+        {/* Protected app shell */}
+        <Route element={<RequireAuth />}>
+          <Route path="/*" element={<TodosApp />} />
+        </Route>
+
+        {/* Fallback */}
+        <Route path="*" element={<Navigate to="/today" replace />} />
+      </Routes>
+
+      {isSignedIn && <RouteSwitcher />}
       <Toaster />
     </div>
   );
 }
 
-function TodosApp() {
-  console.log("TodosApp component rendered - user is authenticated");
+function RequireAuth() {
+  const currentUser = useQuery(api.auth.getCurrentUser);
+  const isSignedIn = !!(currentUser && currentUser.email);
+  if (currentUser === undefined) return null;
+  return isSignedIn ? <Outlet /> : <Navigate to="/auth/signin" replace />;
+}
 
+function AuthRoutes() {
+  const currentUser = useQuery(api.auth.getCurrentUser);
+  const isSignedIn = !!(currentUser && currentUser.email);
+  if (currentUser === undefined) return null;
+  if (isSignedIn) {
+    return <Navigate to="/today" replace />;
+  }
+  return (
+    <Routes>
+      <Route path="signin" element={<AuthPage initialFlow="signIn" />} />
+      <Route path="signup" element={<AuthPage initialFlow="signUp" />} />
+      <Route path="*" element={<Navigate to="/auth/signin" replace />} />
+    </Routes>
+  );
+}
+function TodosApp() {
   return (
     <SidebarProvider
       style={
@@ -117,11 +163,20 @@ function TodosAppLayout() {
               <div className="container mx-auto py-8 max-w-4xl">
                 <div className="flex-1 overflow-auto">
                   <Routes>
-                    <Route path="/" element={<TodayPage />} />
-                    <Route path="/today" element={<TodayPage />} />
-                    <Route path="/all" element={<AllPage />} />
-                    <Route path="/projects/:projectId" element={<ProjectPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
+                    {/* Public auth routes */}
+                    <Route path="/auth/*" element={<AuthRoutes />} />
+
+                    {/* Protected app routes */}
+                    <Route element={<RequireAuth />}>
+                      <Route path="/" element={<TodayPage />} />
+                      <Route path="/today" element={<TodayPage />} />
+                      <Route path="/all" element={<AllPage />} />
+                      <Route path="/projects/:projectId" element={<ProjectPage />} />
+                      <Route path="/settings/*" element={<SettingsPage />} />
+                    </Route>
+
+                    {/* Fallback */}
+                    <Route path="*" element={<Navigate to="/today" replace />} />
                   </Routes>
                 </div>
               </div>
@@ -143,7 +198,7 @@ function TodosAppLayout() {
   );
 }
 
-function AuthPage() {
+function AuthPage({ initialFlow }: { initialFlow?: "signIn" | "signUp" }) {
   console.log("AuthPage component rendered - user is not authenticated");
 
   const { signIn } = useAuthActions();
@@ -151,7 +206,7 @@ function AuthPage() {
   const migrateUsers = useMutation(api.auth.migrateUsers);
   const ensureUserExists = useMutation(api.auth.ensureUserExists);
   const debugUserState = useQuery(api.auth.debugUserState);
-  const [flow, setFlow] = useState<"signIn" | "signUp">("signIn");
+  const [flow, setFlow] = useState<"signIn" | "signUp">(initialFlow ?? "signIn");
   const [error, setError] = useState<string | null>(null);
 
   return (
@@ -171,6 +226,7 @@ function AuthPage() {
               e.preventDefault();
               const formData = new FormData(e.target as HTMLFormElement);
               const email = formData.get("email") as string;
+              const name = (formData.get("name") as string | null) || localStorage.getItem("pendingUserName");
               formData.set("flow", flow);
 
               void (async () => {
@@ -179,11 +235,25 @@ function AuthPage() {
                   const email = formData.get("email") as string;
                   console.log("Signing in with email:", email);
 
-                  // Store the email in localStorage before sign-in
+                  // Store the email/name in localStorage before sign-in
                   localStorage.setItem("pendingUserEmail", email);
+                  if (name && name.trim()) {
+                    localStorage.setItem("pendingUserName", name.trim());
+                  }
 
                   await signIn("password", formData);
                   console.log("Sign-in successful");
+
+                  // After sign-in, persist email/name to users table
+                  const pendingEmail = localStorage.getItem("pendingUserEmail");
+                  const pendingName = localStorage.getItem("pendingUserName") || undefined;
+                  if (pendingEmail) {
+                    try {
+                      await storeUserEmail({ email: pendingEmail, name: pendingName });
+                    } catch (e) {
+                      console.warn("storeUserEmail failed", e);
+                    }
+                  }
 
                   // Add debugging to check auth state
                   setTimeout(() => {
@@ -197,12 +267,20 @@ function AuthPage() {
                   }, 2000);
                 } catch (error: any) {
                   console.error("Error during sign-in:", error);
-                  setError(error.message);
+                  const friendly = normalizeAuthErrorMessage(error?.message ?? String(error));
+                  setError(friendly);
                 }
               })();
             }}
           >
             <div className="space-y-4">
+              {flow === "signUp" && (
+                <Input
+                  type="text"
+                  name="name"
+                  placeholder="Full name (optional)"
+                />
+              )}
               <Input
                 type="email"
                 name="email"
@@ -221,59 +299,6 @@ function AuthPage() {
               {flow === "signIn" ? "Sign in" : "Sign up"}
             </Button>
 
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={() => {
-                void (async () => {
-                  try {
-                    console.log("Running user migration...");
-                    await migrateUsers();
-                    console.log("Migration completed");
-                    alert("User migration completed! Check the console for details.");
-                  } catch (error: any) {
-                    console.error("Migration failed:", error);
-                    alert("Migration failed: " + (error?.message || String(error)));
-                  }
-                })();
-              }}
-            >
-              Clean Up Duplicate Users
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={() => {
-                console.log("Current user state:", debugUserState);
-                alert("Check console for user state debug info");
-              }}
-            >
-              Debug User State
-            </Button>
-
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={() => {
-                void (async () => {
-                  try {
-                    console.log("Ensuring user exists...");
-                    await ensureUserExists();
-                    console.log("User ensured");
-                    alert("User record created! Try signing in again.");
-                  } catch (error: any) {
-                    console.error("Failed to ensure user:", error);
-                    alert("Failed to ensure user: " + (error?.message || String(error)));
-                  }
-                })();
-              }}
-            >
-              Create User Record
-            </Button>
 
             <div className="text-center">
               <Button
@@ -289,11 +314,11 @@ function AuthPage() {
             </div>
 
             {error && (
-              <Card className="border-destructive bg-destructive/10">
-                <CardContent className="p-3">
-                  <p className="text-destructive text-sm">{error}</p>
-                </CardContent>
-              </Card>
+              <Alert variant="destructive" className="mt-2">
+                <AlertCircle />
+                <AlertTitle>Sign-in failed</AlertTitle>
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
             )}
           </form>
         </CardContent>
